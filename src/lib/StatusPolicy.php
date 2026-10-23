@@ -8,6 +8,8 @@
  * @license   https://www.gnu.org/licenses/gpl-3.0.html GPL-3.0-or-later
  */
 
+declare(strict_types=1);
+
 namespace Monokulo\PrestaShop;
 
 if (!defined('_PS_VERSION_')) {
@@ -39,24 +41,15 @@ final class StatusPolicy
 {
     public static function decide(WebhookEvent $event): ?Decision
     {
-        switch ($event->event) {
-            case 'order.unconfirmed':
-            case 'order.confirming':
-                return new Decision(Decision::STATUS_WAITING, 'note_waiting');
-            case 'order.partial':
-                return new Decision(Decision::STATUS_PARTIAL, 'note_partial');
-            case 'order.paid':
-                return new Decision(Decision::STATUS_PAID, 'note_paid', true, true);
-            case 'order.overpaid':
-                return new Decision(Decision::STATUS_PAID, 'note_overpaid', true, true);
-            case 'order.expired':
-                return new Decision(Decision::STATUS_EXPIRED, 'note_expired');
-            case 'order.double_spend_detected':
-                return new Decision(null, 'note_double_spend_detected');
-            case 'order.double_spend_reversed':
-                return new Decision(null, 'note_double_spend_reversed');
-            default:
-                return null;
-        }
+        return match ($event->event) {
+            'order.unconfirmed', 'order.confirming' => new Decision(Decision::STATUS_WAITING, 'note_waiting'),
+            'order.partial' => new Decision(Decision::STATUS_PARTIAL, 'note_partial'),
+            'order.paid' => new Decision(Decision::STATUS_PAID, 'note_paid', notify: true, paid: true),
+            'order.overpaid' => new Decision(Decision::STATUS_PAID, 'note_overpaid', notify: true, paid: true),
+            'order.expired' => new Decision(Decision::STATUS_EXPIRED, 'note_expired'),
+            'order.double_spend_detected' => new Decision(null, 'note_double_spend_detected'),
+            'order.double_spend_reversed' => new Decision(null, 'note_double_spend_reversed'),
+            default => null,
+        };
     }
 }

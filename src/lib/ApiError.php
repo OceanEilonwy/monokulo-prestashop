@@ -8,6 +8,8 @@
  * @license   https://www.gnu.org/licenses/gpl-3.0.html GPL-3.0-or-later
  */
 
+declare(strict_types=1);
+
 namespace Monokulo\PrestaShop;
 
 if (!defined('_PS_VERSION_')) {
