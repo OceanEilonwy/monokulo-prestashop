@@ -60,8 +60,8 @@ final class Shop {
 	 * Signs in to the back office as a merchant does, through its login form
 	 * (PrestaShop 9's, or 8's older one).
 	 */
-	public static function admin(): Browser {
-		$browser = new Browser();
+	public static function admin(?Browser $browser = null): Browser {
+		$browser ??= new Browser();
 		$page = $browser->follow($browser->get(self::ADMIN . 'index.php?controller=AdminLogin'));
 		if (str_contains($page->body, 'name="submit_login"')) {
 			$done = $browser->submit($page, '/login', ['email' => self::ADMIN_EMAIL, 'passwd' => self::ADMIN_PASSWORD]);

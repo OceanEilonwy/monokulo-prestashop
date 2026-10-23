@@ -74,7 +74,7 @@ class Monokulo extends PaymentModule
         $this->version = '0.1.0';
         $this->author = 'Monokulo';
         $this->need_instance = 0;
-        $this->ps_versions_compliancy = ['min' => '8.1.0', 'max' => '9.99.99'];
+        $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.99.99'];
         $this->controllers = ['validation', 'pay', 'webhook', 'connect'];
         $this->currencies = true;
         $this->currencies_mode = 'checkbox';
