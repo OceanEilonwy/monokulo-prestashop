@@ -104,7 +104,7 @@ class Monokulo extends PaymentModule
         $this->repository()->install();
 
         $awaiting = $this->installAwaitingStatus();
-        Configuration::updateGlobalValue(self::ADDRESS, 'https://monokulo.com');
+        Configuration::updateGlobalValue(self::ADDRESS, 'https://www.monokulo.com');
         Configuration::updateGlobalValue(self::FORWARD_ERRORS, 0);
         foreach (self::STATUSES as $key => $default) {
             Configuration::updateGlobalValue($this->statusKey($key), $default === null ? $awaiting : (int) Configuration::get($default));
@@ -274,7 +274,7 @@ class Monokulo extends PaymentModule
                         'desc' => $this->text('address_help'),
                         'name' => self::ADDRESS,
                         'required' => true,
-                        'placeholder' => 'https://monokulo.com',
+                        'placeholder' => 'https://www.monokulo.com',
                     ],
                     [
                         'type' => 'switch',
@@ -820,7 +820,7 @@ class Monokulo extends PaymentModule
             'settings' => $this->trans('Monokulo settings', [], $admin),
             'settings_saved' => $this->trans('The Monokulo settings are saved.', [], $admin),
             'address' => $this->trans('Monokulo address', [], $admin),
-            'address_help' => $this->trans('Where your Monokulo is, as your browser opens it: https://monokulo.com, or your own Monokulo\'s address.', [], $admin),
+            'address_help' => $this->trans('Where your Monokulo is, as your browser opens it: https://www.monokulo.com, or your own Monokulo\'s address.', [], $admin),
             'forward_errors' => $this->trans('Send errors to Monokulo', [], $admin),
             'forward_errors_help' => $this->trans('Also sends this module\'s warnings and errors to your Monokulo, when the store there accepts client logs. They are always written to var/logs/monokulo.log, and to Advanced Parameters > Logs.', [], $admin),
             'statuses' => $this->trans('Order statuses', [], $admin),
@@ -844,7 +844,7 @@ class Monokulo extends PaymentModule
             'connect' => $this->trans('Connect', [], $admin),
             'reconnect' => $this->trans('Connect again', [], $admin),
             'error_permission' => $this->trans('You do not have permission to change the Monokulo settings.', [], $admin),
-            'error_address' => $this->trans('Enter an http or https address, such as https://monokulo.com.', [], $admin),
+            'error_address' => $this->trans('Enter an http or https address, such as https://www.monokulo.com.', [], $admin),
             'error_status' => $this->trans('Choose an order status.', [], $admin),
             'error_connect_address' => $this->trans('Save your Monokulo address before connecting.', [], $admin),
             'error_connect_permission' => $this->trans('You do not have permission to connect shops.', [], $admin),

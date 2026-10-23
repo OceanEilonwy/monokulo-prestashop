@@ -1,14 +1,14 @@
 # Monokulo for PrestaShop
 
 Accept Monero in a PrestaShop shop through your own
-[Monokulo](https://monokulo.com/), the self-hosted, non-custodial Monero
+[Monokulo](https://docs.monokulo.com/), the self-hosted, non-custodial Monero
 payment processor. Monokulo only ever holds a view key: it watches the
 chain for payments to your wallet and tells the shop when an order is paid.
 No spend key touches the shop or Monokulo.
 
 - PrestaShop **8.2** or **9** (tested on 8.2.8 with PHP 8.1, and on 9.2.0
   with PHP 8.2 and 8.5); PHP **8.1** or newer
-- A store on [monokulo.com](https://monokulo.com/), or on your own Monokulo
+- A store on [www.monokulo.com](https://www.monokulo.com/), or on your own Monokulo
   (its operator must have set its public address)
 - GPL-3.0-or-later
 
@@ -24,7 +24,7 @@ No spend key touches the shop or Monokulo.
 
 On the module's settings page:
 
-1. Check the **Monokulo address**: `https://monokulo.com` (the default),
+1. Check the **Monokulo address**: `https://www.monokulo.com` (the default),
    or your own Monokulo's address as your browser opens it. **Save**.
 2. Under **Stores**, press **Connect** next to your shop.
 3. Sign in to Monokulo (or sign up) in the page that opens. Monokulo finds
