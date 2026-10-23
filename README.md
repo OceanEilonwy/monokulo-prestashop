@@ -100,9 +100,11 @@ on the order's page in the back office.
 
 A paid order stays paid: if Monokulo later reports it expired or part paid
 (after a double spend, say), the order keeps its status, and a note says
-so. If an order's total changed after a first payment request and the older
-request is paid, the order isn't marked paid: a note asks you to check the
-amount.
+so. An order whose total changed after a first payment request has more
+than one Monokulo order, and Monokulo keeps watching them all: a payment to
+any of them marks the order paid; anything else from an earlier one is
+only a note. If two of them are paid, the second is a note asking you to
+refund it.
 
 ### Refunds
 

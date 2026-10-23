@@ -35,25 +35,36 @@ final class Orders implements OrderUpdater
     ) {
     }
 
-    public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest, Connection $connection): void
+    /**
+     * - Paid (`order.paid`, `order.overpaid`) from any of the order's Monokulo
+     *   orders marks it paid: the money arrived, whichever payment request
+     *   it went to.
+     * - Paid when another of its Monokulo orders was paid already: a second
+     *   payment, a note only, for the merchant to refund.
+     * - Anything else from a Monokulo order that is not the current one: a
+     *   note only.
+     * - A paid order never goes back: a later event is a note.
+     */
+    public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest, bool $paidElsewhere, Connection $connection): void
     {
         $order = new \Order($orderId);
         if (!\Validate::isLoadedObject($order)) {
             throw new \RuntimeException('order ' . $orderId . ' no longer exists');
         }
         $link = $event->storeId ? ' ' . $this->module->text('see_in_monokulo', ['%url%' => $connection->dashboardOrderUrl($event->storeId, $event->orderId)]) : '';
+        $transaction = $event->txid ?? $this->module->text('note_unknown_transaction');
+        $note = $this->module->text($decision->note, ['%transaction%' => $transaction]);
+        if (!$latest) {
+            $note .= ' ' . $this->module->text('note_earlier_request');
+        }
 
-        // Paid, but not the order's newest payment request: the total changed
-        // since. Tell the merchant instead of marking it paid.
-        if ($decision->paid && !$latest) {
-            $this->note($order, $this->module->text('note_superseded') . $link);
+        if ($decision->paid && $paidElsewhere) {
+            $this->note($order, $this->module->text('note_paid_twice', ['%transaction%' => $transaction]) . $link);
 
             return;
         }
 
-        $note = $this->module->text($decision->note, ['%transaction%' => $event->txid ?? $this->module->text('note_unknown_transaction')]);
-
-        if ($decision->status === null) {
+        if ($decision->status === null || (!$decision->paid && !$latest)) {
             $this->note($order, $note . $link);
 
             return;

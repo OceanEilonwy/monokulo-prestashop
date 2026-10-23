@@ -215,15 +215,108 @@ final class WebhookTest extends ShopTestCase {
 	}
 
 	/**
-	 * The order's total changed after a first payment request, so a newer one
-	 * exists. The older one being paid doesn't mark the order paid.
+	 * Delivers the vector `name` as if it were about Monokulo order
+	 * `orderId`: the same event, its own id, signed with the shop's secret.
 	 */
-	public function test_paying_an_older_request_is_flagged_not_marked_paid(): void {
-		$this->repository()->recordOrder('ord_newer', (int)$this->order->id, 1, self::HOST, '20.00', 'GBP', 1760000001);
+	private function deliverFor(string $name, string $orderId): int {
+		$event = json_decode(Vectors::delivery($name)['body'], true);
+		$event['order_id'] = $orderId;
+		$event['event_id'] .= '_' . $orderId;
+		$body = (string)json_encode($event);
+		$t = Vectors::sentAt();
 
-		$this->assertSame(200, $this->deliverVector('order.paid'));
-		$this->assertSame($this->awaiting(), $this->currentStatus());
-		$this->assertStringContainsString('older payment request for this order was paid', $this->lastNote());
+		return $this->deliver($body, 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, Vectors::secret()));
+	}
+
+	/** The order's total changed after its first payment request (the vectors' order): a newer one is the current one. */
+	private function newerRequest(): string {
+		$this->repository()->recordOrder('order_newer', (int)$this->order->id, 1, self::HOST, '20.00', 'GBP', 1760000001);
+
+		return 'order_newer';
+	}
+
+	private function payments(): int {
+		return count((new \Order((int)$this->order->id))->getOrderPaymentCollection());
+	}
+
+	/** The money arrived, whichever of the order's payment requests it went to: paid. */
+	public function test_paying_an_earlier_request_marks_the_order_paid(): void {
+		$this->newerRequest();
+
+		$this->assertSame(200, $this->deliverVector('order.paid'), 'an earlier Monokulo order is still recognised');
+
+		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
+		$this->assertSame(1, $this->payments());
+		$this->assertStringContainsString('Monokulo: paid in full.', $this->lastNote());
+		$this->assertStringContainsString('earlier payment request for this order', $this->lastNote());
+		$this->assertNotNull($this->rows('SELECT `paid_at` FROM `' . _DB_PREFIX_ . "monokulo_order` WHERE `monokulo_order_id` = '" . Vectors::orderId() . "'")[0]['paid_at']);
+	}
+
+	/** Anything but a payment from a request that isn't the current one: a note, and the status stays. */
+	public function test_other_events_of_an_earlier_request_are_notes_only(): void {
+		$this->newerRequest();
+		$stock = (int)\StockAvailable::getQuantityAvailableByProduct(self::MUG);
+
+		foreach (['order.unconfirmed', 'order.partial', 'order.expired'] as $name) {
+			$this->assertSame(200, $this->deliverVector($name), $name);
+			$this->assertSame($this->awaiting(), $this->currentStatus(), $name);
+			$this->assertStringContainsString('earlier payment request for this order', $this->lastNote(), $name);
+		}
+		$this->assertStringContainsString('payment window closed', $this->lastNote());
+		$this->assertCount(3, $this->notes((int)$this->order->id));
+		\Cache::clean('*');
+		$this->assertSame($stock, (int)\StockAvailable::getQuantityAvailableByProduct(self::MUG), 'not cancelled, so no stock back');
+	}
+
+	/** The current request still moves the order as before. */
+	public function test_the_current_request_still_moves_the_order(): void {
+		$newer = $this->newerRequest();
+
+		$this->assertSame(200, $this->deliverFor('order.expired', $newer));
+
+		$this->assertSame((int)\Configuration::get('PS_OS_CANCELED'), $this->currentStatus());
+		$this->assertStringNotContainsString('earlier payment request', $this->lastNote());
+	}
+
+	/** Paid by an earlier request: the current one expiring later leaves it paid. */
+	public function test_paid_by_an_earlier_request_never_goes_back(): void {
+		$newer = $this->newerRequest();
+		$this->deliverVector('order.paid');
+
+		$this->assertSame(200, $this->deliverFor('order.partial', $newer));
+		$this->assertSame(200, $this->deliverFor('order.expired', $newer));
+
+		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
+		$this->assertStringContainsString('The order was already paid, so its status is left as it is', $this->lastNote());
+	}
+
+	/** Both requests paid: the second is a note for the merchant to refund, and PrestaShop records one payment. */
+	public function test_a_second_paid_request_is_a_note_to_refund(): void {
+		$newer = $this->newerRequest();
+		$this->deliverVector('order.paid');
+
+		$this->assertSame(200, $this->deliverFor('order.overpaid', $newer));
+
+		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
+		$this->assertSame(1, $this->payments());
+		$this->assertStringContainsString('another of its payment requests was paid too', $this->lastNote());
+		$this->assertStringContainsString('Refund the extra payment', $this->lastNote());
+
+		// And the other way round: the newer one paid first.
+		$this->assertSame(200, $this->deliverVector('order.overpaid'));
+		$this->assertStringContainsString('another of its payment requests was paid too', $this->lastNote());
+		$this->assertSame(1, $this->payments());
+	}
+
+	/** More arriving on the request that paid it is a note, never a second payment. */
+	public function test_an_overpayment_after_paid_is_a_note(): void {
+		$this->deliverVector('order.paid');
+
+		$this->assertSame(200, $this->deliverVector('order.overpaid'));
+
+		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
+		$this->assertSame(1, $this->payments());
+		$this->assertStringContainsString('more than the amount due', $this->lastNote());
 	}
 
 	/** Applying fails (no status chosen): 500, and the event is given back so the retry applies it. */
