@@ -27,15 +27,8 @@ final class Connection
         public readonly string $publicKey,
         public readonly string $secretToken,
         public readonly string $webhookSecret,
-        public readonly string $version,
         public readonly int $connectedAt,
     ) {
-    }
-
-    /** Connected by an older plugin whose credentials no longer work as stored. */
-    public function needsReconnect(): bool
-    {
-        return $this->version !== Plugin::CONNECTION_VERSION;
     }
 
     public function ordersUrl(): string

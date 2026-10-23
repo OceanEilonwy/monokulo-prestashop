@@ -28,7 +28,7 @@ final class ClientTest extends TestCase {
 	}
 
 	private function connection(): Connection {
-		return new Connection('shop.example', self::$monokulo->url, 'pk_test', 'sk_test', 'whsec_test', Plugin::CONNECTION_VERSION, 1);
+		return new Connection('shop.example', self::$monokulo->url, 'pk_test', 'sk_test', 'whsec_test', 1);
 	}
 
 	public function test_finishing_connect_sends_the_token_webhook_and_name(): void {
@@ -114,7 +114,7 @@ final class ClientTest extends TestCase {
 	}
 
 	public function test_nothing_listening_is_a_transport_error(): void {
-		$connection = new Connection('shop.example', 'http://127.0.0.1:' . FakeMonokulo::freePort(), 'pk', 'sk', 'wh', Plugin::CONNECTION_VERSION, 1);
+		$connection = new Connection('shop.example', 'http://127.0.0.1:' . FakeMonokulo::freePort(), 'pk', 'sk', 'wh', 1);
 
 		$this->expectException(TransportError::class);
 
@@ -137,7 +137,7 @@ final class ClientTest extends TestCase {
 		(new Client(new Trace()))->forwardLogs($this->connection(), []);
 		$this->assertSame([], self::$monokulo->requests());
 
-		$dead = new Connection('shop.example', 'http://127.0.0.1:' . FakeMonokulo::freePort(), 'pk', 'sk', 'wh', Plugin::CONNECTION_VERSION, 1);
+		$dead = new Connection('shop.example', 'http://127.0.0.1:' . FakeMonokulo::freePort(), 'pk', 'sk', 'wh', 1);
 		(new Client(new Trace()))->forwardLogs($dead, [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']]);
 		$this->addToAssertionCount(1);
 	}

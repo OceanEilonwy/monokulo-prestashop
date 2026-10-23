@@ -50,7 +50,6 @@ final class Repository
                 `public_key` VARCHAR(128) NOT NULL,
                 `secret_token` VARCHAR(255) NOT NULL,
                 `webhook_secret` VARCHAR(255) NOT NULL,
-                `connection_version` VARCHAR(16) NOT NULL,
                 `connected_at` INT(11) NOT NULL,
                 PRIMARY KEY (`host`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
@@ -104,7 +103,6 @@ final class Repository
             $row['public_key'],
             $row['secret_token'],
             $row['webhook_secret'],
-            $row['connection_version'],
             (int) $row['connected_at'],
         );
     }
@@ -113,8 +111,8 @@ final class Repository
     {
         $q = fn (string $v): string => $this->db->quote($v);
         $this->db->execute(
-            'REPLACE INTO `' . $this->table('connection') . '` (`host`, `endpoint`, `public_key`, `secret_token`, `webhook_secret`, `connection_version`, `connected_at`) VALUES ('
-            . implode(', ', [$q($c->host), $q($c->endpoint), $q($c->publicKey), $q($c->secretToken), $q($c->webhookSecret), $q($c->version), (int) $c->connectedAt])
+            'REPLACE INTO `' . $this->table('connection') . '` (`host`, `endpoint`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ('
+            . implode(', ', [$q($c->host), $q($c->endpoint), $q($c->publicKey), $q($c->secretToken), $q($c->webhookSecret), (int) $c->connectedAt])
             . ')'
         );
     }

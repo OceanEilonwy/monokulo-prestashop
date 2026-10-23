@@ -19,7 +19,6 @@ use Monokulo\PrestaShop\Connection;
 use Monokulo\PrestaShop\ConnectLink;
 use Monokulo\PrestaShop\Logger;
 use Monokulo\PrestaShop\OrderRequest;
-use Monokulo\PrestaShop\Plugin;
 use Monokulo\PrestaShop\Repository;
 use Monokulo\PrestaShop\Shop\Orders;
 use Monokulo\PrestaShop\Shop\PrestaShopDatabase;
@@ -339,7 +338,6 @@ class Monokulo extends PaymentModule
                     '%key%' => $connection->publicKey,
                     '%date%' => Tools::displayDate(date('Y-m-d H:i:s', $connection->connectedAt), true),
                 ]) : '',
-                'reconnect' => $connection && $connection->needsReconnect(),
                 'connect' => $back . '&monokulo_connect=' . (int) $shop->id,
             ];
         }
@@ -352,7 +350,6 @@ class Monokulo extends PaymentModule
                 'stores_help' => $this->text('stores_help'),
                 'address_first' => $this->text('address_first'),
                 'not_connected' => $this->text('not_connected'),
-                'reconnect_needed' => $this->text('reconnect_needed'),
                 'connect' => $this->text('connect'),
                 'reconnect' => $this->text('reconnect'),
             ],
@@ -436,7 +433,7 @@ class Monokulo extends PaymentModule
             return 'monokulo_connect_error=unreachable';
         }
 
-        $this->repository()->saveConnection(new Connection($host, $credentials['endpoint'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], Plugin::CONNECTION_VERSION, time()));
+        $this->repository()->saveConnection(new Connection($host, $credentials['endpoint'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
         $this->log()->info(sprintf('%s connected to Monokulo as %s.', $host, $credentials['public_key']));
 
         return 'monokulo_connected=1';
@@ -457,9 +454,8 @@ class Monokulo extends PaymentModule
     /* ------------------------------------------------------------------ */
 
     /**
-     * "Pay with Monero" at checkout, when this shop is connected (by this
-     * module version's rules) and the cart's currency is one the module
-     * takes. PrestaShop's own payment preferences decide countries, currencies
+     * "Pay with Monero" at checkout, when this shop is connected and the
+     * cart's currency is one the module takes. PrestaShop's own payment preferences decide countries, currencies
      * and customer groups.
      *
      * @param array{cart: Cart} $params
@@ -482,12 +478,10 @@ class Monokulo extends PaymentModule
         return [$option];
     }
 
-    /** Whether the current shop is connected, by this module version's rules. */
+    /** Whether the current shop is connected. */
     public function isConnected(): bool
     {
-        $connection = $this->connection();
-
-        return $connection !== null && !$connection->needsReconnect();
+        return $this->connection() !== null;
     }
 
     /** Whether the module takes the cart's currency (PrestaShop's payment preferences). */
@@ -585,7 +579,7 @@ class Monokulo extends PaymentModule
     {
         $connection = $this->connection(new Shop((int) $order->id_shop));
         $retry = $this->payLink((int) $order->id_cart, (string) $order->secure_key);
-        if (!$connection || $connection->needsReconnect()) {
+        if (!$connection) {
             return ['error' => $this->text('error_not_connected'), 'retry' => $retry];
         }
 
@@ -845,7 +839,6 @@ class Monokulo extends PaymentModule
             'stores_help' => $this->trans('Each shop connects to a store in your Monokulo, found by the shop\'s web address. Shops that share an address share one connection.', [], $admin),
             'connected_as' => $this->trans('Connected as %key% since %date%', [], $admin),
             'not_connected' => $this->trans('Not connected', [], $admin),
-            'reconnect_needed' => $this->trans('Connect again: this shop was connected by an older version of this module, and Monero is hidden at checkout until it is.', [], $admin),
             'address_first' => $this->trans('Save your Monokulo address first.', [], $admin),
             'connected' => $this->trans('Your store is connected. Monero is now offered at checkout.', [], $admin),
             'connect' => $this->trans('Connect', [], $admin),

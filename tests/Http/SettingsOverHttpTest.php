@@ -1,7 +1,6 @@
 <?php
 namespace Monokulo\PrestaShop\Tests\Http;
 
-use Monokulo\PrestaShop\Plugin;
 use Monokulo\PrestaShop\Tests\Support\Browser;
 use Monokulo\PrestaShop\Tests\Support\FakeMonokulo;
 use Monokulo\PrestaShop\Tests\Support\Shop;
@@ -42,7 +41,7 @@ final class SettingsOverHttpTest extends TestCase {
 	}
 
 	public function test_over_http_the_page_shows_each_shop_and_its_connection(): void {
-		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', endpoint = 'https://pay.example.com', public_key = 'pk_test', secret_token = 'sk', webhook_secret = 'wh', connection_version = " . Shop::quote(Plugin::CONNECTION_VERSION) . ", connected_at = 1760000000");
+		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', endpoint = 'https://pay.example.com', public_key = 'pk_test', secret_token = 'sk', webhook_secret = 'wh', connected_at = 1760000000");
 
 		$page = Shop::settingsPage($this->browser);
 
@@ -57,13 +56,6 @@ final class SettingsOverHttpTest extends TestCase {
 			$this->assertStringContainsString($label, $text);
 		}
 		$this->assertMatchesRegularExpression('/name="MONOKULO_OS_PAID".*?<option value="' . Shop::setting('PS_OS_PAYMENT') . '"\s+selected/s', $page->body);
-	}
-
-	/** Connected by an older version of this module: the page says to connect again. */
-	public function test_over_http_an_old_connection_asks_to_connect_again(): void {
-		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', endpoint = 'https://pay.example.com', public_key = 'pk_old', secret_token = 'sk', webhook_secret = 'wh', connection_version = '0', connected_at = 1760000000");
-
-		$this->assertStringContainsString('Connect again: this shop was connected by an older version of this module', Shop::settingsPage($this->browser)->text());
 	}
 
 	public function test_over_http_no_connect_button_before_there_is_an_address(): void {
