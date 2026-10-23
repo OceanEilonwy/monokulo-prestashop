@@ -1,0 +1,129 @@
+# Tests on every pull request and push to main. Each job runs the shop in
+# Docker on the runner's own network (docker/compose.yaml), so it is Linux
+# only.
+#
+# - test: the official PrestaShop image, 9.2.0 on PHP 8.2 and 8.5 and 8.2.8
+#   on PHP 8.1: the zip through the back office's module upload, then the
+#   unit, front, admin and http suites. Webhooks are tested against
+#   Monokulo's published vectors (tests/vectors, pinned in
+#   tests/vectors/PIN). 9.2.0 on 8.5 also checks PrestaShop's coding
+#   standard and reports coverage.
+# - vectors: the vendored vectors are still the ones at the pinned commit.
+# - smoke: against a real Monokulo built from the pinned commit (or a given
+#   image): on main, nightly and by hand, not on pull requests (building
+#   Monokulo takes a while).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '47 3 * * *'
+  workflow_dispatch:
+    inputs:
+      monokulo_image:
+        description: Monokulo image for the smoke test (empty builds the commit in tests/vectors/PIN)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: PrestaShop ${{ matrix.prestashop }}, PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - prestashop: '9.2.0'
+            php: '8.2'
+          - prestashop: '9.2.0'
+            php: '8.5'
+            main: true
+          - prestashop: '8.2.8'
+            php: '8.1'
+    env:
+      PS_VERSION: ${{ matrix.prestashop }}
+      PHP_VERSION: ${{ matrix.php }}
+      COVERAGE: ${{ matrix.main && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start PrestaShop
+        run: scripts/test up
+      - name: PrestaShop's coding standard
+        if: matrix.main
+        run: scripts/test lint
+      - name: Run the tests
+        run: scripts/test all
+      - name: Coverage summary
+        if: matrix.main
+        run: |
+          {
+            echo '### Coverage (unit, front, admin)'
+            echo '```'
+            sed -n '1,8p' coverage/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: matrix.main
+        with:
+          name: coverage
+          path: coverage/html
+      - uses: actions/upload-artifact@v4
+        if: matrix.main
+        with:
+          name: monokulo.zip
+          path: |
+            dist/monokulo.zip
+            dist/monokulo.zip.sha256
+      # Apache's error log in the image is the container's own output (docker
+      # compose logs). Every command is bounded.
+      - name: PrestaShop's and the module's logs
+        if: failure()
+        timeout-minutes: 3
+        run: |
+          timeout 60 docker compose -f docker/compose.yaml exec -T prestashop sh -c 'tail -n 100 /var/www/html/var/logs/*.log' || true
+          timeout 60 docker compose -f docker/compose.yaml logs --no-color --tail 200 prestashop || true
+
+  vectors:
+    name: Webhook vectors match the pinned Monokulo
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare with the pinned commit
+        env:
+          MONOKULO_READ_TOKEN: ${{ secrets.MONOKULO_READ_TOKEN }}
+        run: scripts/vectors check
+
+  smoke:
+    name: Smoke test against Monokulo
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Monokulo at the pinned commit
+        if: inputs.monokulo_image == ''
+        env:
+          MONOKULO_READ_TOKEN: ${{ secrets.MONOKULO_READ_TOKEN }}
+        run: |
+          . tests/vectors/PIN
+          auth=${MONOKULO_READ_TOKEN:+x-access-token:$MONOKULO_READ_TOKEN@}
+          docker build -t monokulo:smoke "https://${auth}${repository#https://}.git#${commit}"
+      - name: Start PrestaShop and install the module
+        run: |
+          scripts/test up
+          scripts/test install
+      - name: Smoke test
+        env:
+          MONOKULO_IMAGE: ${{ inputs.monokulo_image || 'monokulo:smoke' }}
+        run: scripts/smoke

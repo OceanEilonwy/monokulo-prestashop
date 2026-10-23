@@ -1,0 +1,49 @@
+# A version tag (v0.1.0) publishes a GitHub release with the module:
+# monokulo.zip and its .sha256. The zip is installed through the back
+# office's module upload and the tests run against it first.
+#
+# PrestaShop finds the module by the monokulo/ folder inside the zip, so the
+# file's name doesn't matter to it; it stays monokulo.zip, and the release's
+# title carries the version.
+#
+# Uploading to PrestaShop Addons is done by hand.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PS_VERSION: '9.2.0'
+      PHP_VERSION: '8.5'
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag is the version
+        run: |
+          version=$(cat VERSION)
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME is not v$version (VERSION)" >&2; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Start PrestaShop
+        run: scripts/test up
+      - name: Build the zip, upload it through the module manager, test
+        run: scripts/test all
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<NOTES
+          Monokulo payment module for PrestaShop 8.2 and 9 (PHP 8.1 or newer).
+
+          Install: in the back office, Modules > Module Manager > Upload a module, and choose \`monokulo.zip\`. See the README for connecting a shop.
+
+          SHA-256: \`$(cut -d' ' -f1 dist/monokulo.zip.sha256)\`
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/monokulo.zip dist/monokulo.zip.sha256 \
+            --title "Monokulo for PrestaShop $VERSION" --notes-file notes.md
