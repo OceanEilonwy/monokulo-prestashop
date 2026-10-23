@@ -11,9 +11,15 @@
 set -eu
 cd "$(dirname "$0")/.."
 
+url=http://localhost:8081
+# Another Monokulo on the port would be tested in this one's place.
+if curl -s -o /dev/null "$url/"; then
+	echo "something already answers on $url: stop it, then run this again" >&2
+	exit 1
+fi
+
 data=$(mktemp -d)
 key=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
-url=http://localhost:8081
 
 if [ -n "${MONOKULO_BIN:-}" ]; then
 	MONOKULO_ENCRYPTION_KEY=$key "$MONOKULO_BIN" --options docker/monokulo-smoke.toml \
