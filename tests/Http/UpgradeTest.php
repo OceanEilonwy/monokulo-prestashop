@@ -31,7 +31,8 @@ final class UpgradeTest extends TestCase {
 			}
 
 			public function row(string $sql): ?array {
-				$row = Shop::db()->query($sql)->fetch(\PDO::FETCH_ASSOC);
+				// As PrestaShop's Db::getRow does.
+				$row = Shop::db()->query($sql . ' LIMIT 1')->fetch(\PDO::FETCH_ASSOC);
 
 				return $row ?: null;
 			}
