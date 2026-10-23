@@ -53,7 +53,7 @@ final class SettingsTest extends ShopTestCase {
 		$errors = $this->module()->saveSettings($this->form(['MONOKULO_ADDRESS' => 'pay.example.com', 'MONOKULO_OS_PAID' => '', 'MONOKULO_OS_EXPIRED' => '99999']));
 
 		$this->assertSame(['address', 'paid-status', 'expired-status'], array_keys($errors));
-		$this->assertSame('Enter an http or https address, such as https://pay.example.com.', $errors['address']);
+		$this->assertSame('Enter an http or https address, such as https://monokulo.com.', $errors['address']);
 		$this->assertSame($before, $this->settings(), 'nothing saved');
 	}
 
