@@ -65,6 +65,22 @@ final class UpgradeTest extends TestCase {
 		Shop::exec("INSERT INTO `mkupgrade_monokulo_connection` VALUES
 			('shop.example', 'https://pay.example.com/', 'pk_a', 'sk_a', 'whsec_a', 1760000000),
 			('other.example', 'https://pay.example.com', 'pk_b', 'sk_b', 'whsec_b', 1760000001)");
+		// And its orders, without when each was paid.
+		Shop::exec("CREATE TABLE `mkupgrade_monokulo_order` (
+			`seq` INT(11) NOT NULL AUTO_INCREMENT,
+			`monokulo_order_id` VARCHAR(64) NOT NULL,
+			`id_order` INT(10) UNSIGNED NOT NULL,
+			`id_shop` INT(10) UNSIGNED NOT NULL,
+			`host` VARCHAR(255) NOT NULL,
+			`amount` VARCHAR(40) NOT NULL,
+			`currency` VARCHAR(8) NOT NULL,
+			`created_at` INT(11) NOT NULL,
+			PRIMARY KEY (`monokulo_order_id`),
+			UNIQUE KEY `seq` (`seq`),
+			KEY `id_order` (`id_order`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+		Shop::exec("INSERT INTO `mkupgrade_monokulo_order` (`monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency`, `created_at`) VALUES
+			('order_old', 7, 1, 'shop.example', '12.50', 'EUR', 1760000000)");
 	}
 
 	protected function tearDown(): void {
@@ -96,6 +112,17 @@ final class UpgradeTest extends TestCase {
 		$repository->install('https://elsewhere.example');
 		$this->assertSame('https://www.monokulo.com/api/v1', $repository->connection('shop.example')->api);
 		$this->assertSame(['host', 'api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at'], $this->columns());
+	}
+
+	/** Its Monokulo orders are still found, and now note when each is paid. */
+	public function test_over_http_upgraded_orders_note_their_payment(): void {
+		$repository = new Repository($this->database());
+
+		$repository->install('https://www.monokulo.com');
+
+		$this->assertSame(['order_id' => 7, 'shop_id' => 1, 'host' => 'shop.example', 'latest' => true, 'paid_elsewhere' => false], $repository->findOrder('order_old'));
+		$repository->markPaid('order_old', 1760000100);
+		$this->assertSame('1760000100', Shop::rows("SELECT `paid_at` FROM `mkupgrade_monokulo_order` WHERE `monokulo_order_id` = 'order_old'")[0]['paid_at']);
 	}
 
 	/** Uninstalling forgot the address but kept the tables: the old endpoint stands in for it. */

@@ -20,9 +20,11 @@ if (!defined('_PS_VERSION_')) {
  * The module's own tables.
  *
  * - `monokulo_connection`: one row per shop host that has connected.
- * - `monokulo_order`: each Monokulo order the shop created, and which
- *   PrestaShop order it pays. A PrestaShop order can have more than one when
- *   its total changed after a first attempt; the newest is the live one.
+ * - `monokulo_order`: every Monokulo order the shop created, which
+ *   PrestaShop order it pays, and when it was paid. A PrestaShop order can
+ *   have more than one when its total changed after a first attempt; the
+ *   newest is the current one, and Monokulo keeps watching the others, so
+ *   their webhooks are still recognised.
  * - `monokulo_event`: webhook events already applied, so a delivery that is
  *   sent again (its answer was lost) changes nothing the second time.
  * - `monokulo_connect_nonce`: connect attempts the admin started, each
@@ -64,6 +66,7 @@ final class Repository
                 `amount` VARCHAR(40) NOT NULL,
                 `currency` VARCHAR(8) NOT NULL,
                 `created_at` INT(11) NOT NULL,
+                `paid_at` INT(11) NULL DEFAULT NULL,
                 PRIMARY KEY (`monokulo_order_id`),
                 UNIQUE KEY `seq` (`seq`),
                 KEY `id_order` (`id_order`)
@@ -95,6 +98,10 @@ final class Repository
             $this->db->execute($statement);
         }
         $this->upgradeConnections($address);
+        // 0.1.0 didn't note when a Monokulo order was paid.
+        if (!$this->db->row('SHOW COLUMNS FROM `' . $this->table('order') . "` LIKE 'paid_at'")) {
+            $this->db->execute('ALTER TABLE `' . $this->table('order') . '` ADD COLUMN `paid_at` INT(11) NULL DEFAULT NULL AFTER `created_at`');
+        }
     }
 
     /**
@@ -196,10 +203,11 @@ final class Repository
     }
 
     /**
-     * The PrestaShop order a Monokulo order pays, and whether it is that
-     * order's newest Monokulo order.
+     * The PrestaShop order a Monokulo order pays, whether it is that order's
+     * newest (current) Monokulo order, and whether another of its Monokulo
+     * orders was paid already.
      *
-     * @return array{order_id: int, shop_id: int, host: string, latest: bool}|null
+     * @return array{order_id: int, shop_id: int, host: string, latest: bool, paid_elsewhere: bool}|null
      */
     public function findOrder(string $monokuloOrderId): ?array
     {
@@ -217,7 +225,19 @@ final class Repository
             'shop_id' => (int) $row['id_shop'],
             'host' => $row['host'],
             'latest' => $newest && $newest['monokulo_order_id'] === $row['monokulo_order_id'],
+            'paid_elsewhere' => (bool) $this->db->row(
+                'SELECT `monokulo_order_id` FROM `' . $this->table('order') . '` WHERE `id_order` = ' . (int) $row['id_order']
+                . ' AND `paid_at` IS NOT NULL AND `monokulo_order_id` <> ' . $this->db->quote($monokuloOrderId)
+            ),
         ];
+    }
+
+    /** Notes that Monokulo order `monokuloOrderId` was paid (the first time only). */
+    public function markPaid(string $monokuloOrderId, int $now): void
+    {
+        $this->db->execute(
+            'UPDATE `' . $this->table('order') . '` SET `paid_at` = ' . $now . ' WHERE `monokulo_order_id` = ' . $this->db->quote($monokuloOrderId) . ' AND `paid_at` IS NULL'
+        );
     }
 
     /**

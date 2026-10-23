@@ -23,7 +23,8 @@ if (!defined('_PS_VERSION_')) {
 interface OrderUpdater
 {
     /**
-     * @param bool $latest whether `event` is about the order's newest Monokulo order
+     * @param bool $latest whether `event` is about the order's newest (current) Monokulo order
+     * @param bool $paidElsewhere whether another of the order's Monokulo orders was paid already
      */
-    public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest, Connection $connection): void;
+    public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest, bool $paidElsewhere, Connection $connection): void;
 }

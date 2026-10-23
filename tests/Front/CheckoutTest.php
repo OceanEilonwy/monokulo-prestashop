@@ -109,7 +109,7 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame('Bearer sk_test', self::$monokulo->requests()[0]['headers']['authorization'], 'the entry, as the store\'s key sees it');
 		$this->assertSame('Bearer sk_test', $request['headers']['authorization']);
 		$this->assertSame('prestashop/' . Plugin::VERSION, $request['headers']['monokulo-client']);
-		$amount = number_format((float)$order->total_paid, 2, '.', '');
+		$amount = rtrim(rtrim(number_format((float)$order->total_paid, 2, '.', ''), '0'), '.');
 		$this->assertSame([
 			'amount'                 => $amount,
 			'currency'               => 'GBP',

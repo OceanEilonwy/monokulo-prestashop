@@ -11,12 +11,12 @@ final class OrderRequestTest extends TestCase {
 		$body = OrderRequest::body(1, 1042, 'XKBKNABJK', 12.5, 'eur', 2, ['Blue mug', 'Tea', 'Spoon'], 'Order XKBKNABJK', ' + %d more');
 
 		$this->assertSame([
-			'amount'                 => '12.50',
+			'amount'                 => '12.5',
 			'currency'               => 'EUR',
 			'merchant_order_id'      => 'XKBKNABJK',
 			'show_merchant_order_id' => false,
 			'description'            => 'Order XKBKNABJK: Blue mug + 2 more',
-			'idempotency_key'        => 'ps:1:1042:12.50:EUR',
+			'idempotency_key'        => 'ps:1:1042:12.5:EUR',
 		], $body);
 	}
 
@@ -32,16 +32,26 @@ final class OrderRequestTest extends TestCase {
 
 	public static function amounts(): array {
 		return [
-			'two decimals'           => [12.5, 'EUR', 2, '12.50'],
+			'trailing zero trimmed'  => [12.5, 'EUR', 2, '12.5'],
+			'whole'                  => [12.0, 'EUR', 2, '12'],
+			'two decimals'           => [12.34, 'EUR', 2, '12.34'],
 			'rounded'                => [12.345, 'USD', 2, '12.35'],
-			'no decimals currency'   => [1000.0, 'JPY', 0, '1000.00'],
+			'rounded up to whole'    => [12.999, 'USD', 2, '13'],
+			'no decimals currency'   => [1000.0, 'JPY', 0, '1000'],
+			'JPY rounds'             => [1000.6, 'JPY', 0, '1001'],
+			'three decimals'         => [1.2345, 'KWD', 3, '1.235'],
 			'XMR keeps its places'   => [0.123456789012, 'XMR', 12, '0.123456789012'],
-			'XMR capped at 12'       => [1.5, 'xmr', 15, '1.500000000000'],
-			'fiat capped at 8'       => [1.5, 'BTC', 12, '1.50000000'],
-			'no thousands separator' => [1234567.0, 'EUR', 2, '1234567.00'],
+			'XMR capped at 12'       => [1.5, 'xmr', 15, '1.5'],
+			'never more than 12'     => [0.1234567890123, 'BTC', 14, '0.123456789012'],
+			'no thousands separator' => [1234567.0, 'EUR', 2, '1234567'],
+			'zero'                   => [0.0, 'EUR', 2, '0'],
 		];
 	}
 
+	/**
+	 * In the currency's own decimals, trailing zeros trimmed: never padded
+	 * past what Monokulo takes for a fiat currency (2).
+	 */
 	#[DataProvider('amounts')]
 	public function test_amounts_are_plain_decimals(float $total, string $currency, int $decimals, string $expected): void {
 		$this->assertSame($expected, OrderRequest::amount($total, $currency, $decimals));
