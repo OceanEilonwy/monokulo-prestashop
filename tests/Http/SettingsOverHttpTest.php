@@ -95,7 +95,7 @@ final class SettingsOverHttpTest extends TestCase {
 
 		$saved = $this->browser->submitWith($page, 'MONOKULO_ADDRESS', ['MONOKULO_ADDRESS' => 'pay.example.com', 'MONOKULO_FORWARD_ERRORS' => '1', 'submitMonokulo' => '1']);
 
-		$this->assertStringContainsString('Enter an http or https address, such as https://monokulo.com.', $saved->text());
+		$this->assertStringContainsString('Enter an http or https address, such as https://www.monokulo.com.', $saved->text());
 		$this->assertSame($this->monokulo->url, Shop::setting('MONOKULO_ADDRESS'), 'nothing saved');
 		$this->assertSame((string)$this->saved['MONOKULO_FORWARD_ERRORS'], (string)Shop::setting('MONOKULO_FORWARD_ERRORS'));
 	}
