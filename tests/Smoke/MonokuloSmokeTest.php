@@ -19,7 +19,12 @@ use PHPUnit\Framework\TestCase;
  *    Connect;
  * 3. on Monokulo, sets up the store for the shop, picks the wallet, and
  *    goes back to PrestaShop, which redeems the token: connected;
- * 4. a guest buys something with Monero: the shop places the order,
+ * 4. a guest buys something with Monero while Monokulo has no exchange rate
+ *    (its rate provider, tests/Support/fake-rates.php, rate limits it):
+ *    Monokulo's real `rates-unavailable`, so no Monokulo order, the guest
+ *    is asked to try again shortly, and the merchant's log says why. The
+ *    provider back, the guest tries again from the payment link: the shop
+ *    places no second order,
  *    makes the Monokulo order with the API entry's `create-order` form and
  *    sends them to the order's checkout, which loads; the order, read back
  *    through the API, is pending, and its `mk:dashboard-order` (the
@@ -41,6 +46,8 @@ final class MonokuloSmokeTest extends TestCase {
 	private const VIEW_KEY = '0707070707070707070707070707070707070707070707070707070707070707';
 	private const SPEND_PUBLIC_KEY = '8621f587cfc4d6f869720476565ecd0972451ff7b8dada3498c9d3c2ca54fc90';
 	private const PASSWORD = 'correct horse battery staple';
+	/** While this file is there, the rate provider's stand-in rate limits Monokulo (tests/Support/fake-rates.php). */
+	private const RATES_DOWN = '/tmp/monokulo-smoke-rates-down';
 
 	private string $monokulo;
 	private Browser $browser;
@@ -58,7 +65,7 @@ final class MonokuloSmokeTest extends TestCase {
 	public function test_connect_then_a_customer_is_sent_to_pay(): void {
 		$this->signUpToMonokulo();
 		$this->connectTheShop();
-		$checkout = $this->buyWithMonero();
+		$checkout = $this->buyWithNoExchangeRateThenAgain();
 
 		// The Monokulo checkout loads.
 		$page = $this->browser->get($checkout);
@@ -222,6 +229,50 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertStringStartsWith('sk_', $connection['secret_token']);
 		$this->assertStringStartsWith('pk_', $connection['public_key']);
 		$this->assertNotSame('', $connection['webhook_secret']);
+	}
+
+	/**
+	 * A guest checkout with Monero while Monokulo's rate provider rate
+	 * limits it: no exchange rate, so no Monokulo order, and the guest is
+	 * asked to try again. Once it answers again, the payment link makes
+	 * the order (with the same request) and sends the guest to its
+	 * checkout, which is returned.
+	 */
+	private function buyWithNoExchangeRateThenAgain(): string {
+		$customer = new Browser();
+		$payment = Storefront::toPayment($customer);
+		$logs = (int)Shop::rows("SELECT COUNT(*) AS n FROM ps_log WHERE object_type = 'Monokulo'")[0]['n'];
+		$made = $this->monokuloOrders();
+
+		touch(self::RATES_DOWN);
+		try {
+			$answer = Storefront::payWithMonero($customer, $payment);
+		} finally {
+			unlink(self::RATES_DOWN);
+		}
+		$this->assertSame(200, $answer->status, $answer->text());
+		$this->assertStringContainsString('Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', $answer->text());
+		$this->assertSame($made, $this->monokuloOrders(), 'no Monokulo order');
+		$logged = implode("\n", array_column(Shop::rows("SELECT message FROM ps_log WHERE object_type = 'Monokulo' ORDER BY id_log LIMIT 100 OFFSET $logs"), 'message'));
+		$this->assertStringContainsString('HTTP 503', $logged);
+		$this->assertStringContainsString('no exchange rate for this currency right now', $logged);
+		$this->assertMatchesRegularExpression('/after \d+ seconds as Monokulo asked/', $logged, 'Monokulo passed on the provider\'s Retry-After');
+		$this->assertMatchesRegularExpression('/id="monokulo-retry"[^>]*href="([^"]+)"/', $answer->body);
+		preg_match('/id="monokulo-retry"[^>]*href="([^"]+)"/', $answer->body, $m);
+		$orders = (int)Shop::rows('SELECT COUNT(*) AS n FROM ps_orders')[0]['n'];
+
+		sleep(3); // the provider's Retry-After
+		$again = $customer->get(html_entity_decode($m[1]));
+		$this->assertSame(302, $again->status, $again->text());
+		$this->assertMatchesRegularExpression('#\A' . preg_quote($this->monokulo, '#') . '/checkout/order_[0-9a-f-]{32,36}\z#', (string)$again->location());
+		$this->assertSame($orders, (int)Shop::rows('SELECT COUNT(*) AS n FROM ps_orders')[0]['n'], 'the same shop order');
+		$this->assertSame($made + 1, $this->monokuloOrders());
+
+		return (string)$again->location();
+	}
+
+	private function monokuloOrders(): int {
+		return (int)Shop::rows('SELECT COUNT(*) AS n FROM ps_monokulo_order')[0]['n'];
 	}
 
 	/** A guest checkout with Monero; returns the Monokulo checkout it was sent to. */

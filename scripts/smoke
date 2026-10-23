@@ -17,6 +17,11 @@ if curl -s -o /dev/null "$url/"; then
 	echo "something already answers on $url: stop it, then run this again" >&2
 	exit 1
 fi
+# Its exchange rates' stand-in (tests/Support/fake-rates.php).
+if curl -s -o /dev/null http://localhost:18094/; then
+	echo "something already answers on localhost:18094: stop it, then run this again" >&2
+	exit 1
+fi
 # Its onion listener (docker/monokulo-smoke.toml).
 if curl -s -o /dev/null http://127.0.0.1:18093/; then
 	echo "something already answers on 127.0.0.1:18093: stop it, then run this again" >&2
@@ -41,9 +46,20 @@ else
 	stop() { docker logs monokulo-smoke > "$data/monokulo.log" 2>&1 || true; docker stop monokulo-smoke > /dev/null 2>&1 || true; }
 fi
 
+# The exchange rates' stand-in, served from the shop's container (on this
+# machine's network): a PHP router in the background.
+compose() {
+	docker compose -f docker/compose.yaml "$@"
+}
+compose exec -T -d prestashop sh -c 'rm -f /tmp/monokulo-smoke-rates-down; echo $$ > /tmp/monokulo-smoke-rates.pid; exec php -S localhost:18094 /repo/tests/Support/fake-rates.php'
+unserve() {
+	compose exec -T prestashop sh -c 'test -f /tmp/monokulo-smoke-rates.pid && kill "$(cat /tmp/monokulo-smoke-rates.pid)"; rm -f /tmp/monokulo-smoke-rates.pid /tmp/monokulo-smoke-rates-down' 2>/dev/null || true
+}
+
 cleanup() {
 	status=$?
 	stop
+	unserve
 	if [ "$status" != 0 ]; then
 		echo "--- Monokulo's log ---"
 		tail -n 100 "$data/monokulo.log" 2>/dev/null || true

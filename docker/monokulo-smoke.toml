@@ -8,6 +8,10 @@
 # - signup: anyone can make an account (the test signs up a merchant).
 # - engine.monero_node: a wallet can only be added on a network with a node.
 #   Nothing is paid in the smoke test, so the node needn't answer.
+# - exchange_rate: prices from a stand-in for CoinGecko on this machine
+#   (tests/Support/fake-rates.php, started by scripts/smoke), so orders
+#   don't depend on, or get rate limited by, the real one; the smoke test
+#   also has it refuse, for a real `rates-unavailable`.
 # - onion_uri, tor, abuse.onion_listener: an onion address (the Tor
 #   Project's own, as Monokulo's tests use), served by an external tor that
 #   isn't there: Monokulo then links each order's onion checkout and gives
@@ -29,6 +33,10 @@ mode = "public"
 
 [webhooks]
 allow_private_urls = true
+
+[exchange_rate]
+coingecko_base_url = "http://localhost:18094"
+coinmarketcap_enabled = false
 
 [engine.monero_node]
 mainnet = { host = "127.0.0.1", port = 18089, ssl = false }

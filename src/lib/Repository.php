@@ -108,11 +108,27 @@ final class Repository implements EntryStore
         ],
     ];
 
-    /** Creates the tables, and adds what's new to ones an earlier version made. */
+    /**
+     * Columns an earlier version made that nothing reads any more, by table.
+     * `order.dashboard`: an early 0.3.0 kept each order's page on the
+     * merchant's dashboard; it now comes with each of the order's webhooks.
+     */
+    private const DROPPED = [
+        'order' => ['dashboard'],
+    ];
+
+    /** Creates the tables, adds what's new to ones an earlier version made, and drops what's gone. */
     public function install(): void
     {
         foreach ($this->schema() as $statement) {
             $this->db->execute($statement);
+        }
+        foreach (self::DROPPED as $table => $columns) {
+            foreach ($columns as $column) {
+                if ($this->hasColumn($this->table($table), $column)) {
+                    $this->db->execute('ALTER TABLE `' . $this->table($table) . '` DROP COLUMN `' . $column . '`');
+                }
+            }
         }
         foreach (self::ADDED as $table => $columns) {
             foreach ($columns as $column => $definition) {
