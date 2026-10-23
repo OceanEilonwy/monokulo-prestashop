@@ -2,6 +2,7 @@
 namespace Monokulo\PrestaShop\Tests\Front;
 
 use Monokulo\PrestaShop\Connection;
+use Monokulo\PrestaShop\Entry;
 use Monokulo\PrestaShop\Plugin;
 use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\FakeMonokulo;
@@ -158,8 +159,9 @@ final class CheckoutTest extends ShopTestCase {
 	}
 
 	/**
-	 * A Monokulo without an onion address has no onion checkout: a Tor
-	 * customer is told, not sent to the web, and the merchant's log says why.
+	 * A Monokulo without an onion address (its entry has no `mk:onion-api`):
+	 * a Tor customer is told, not sent to the web, and the merchant's log
+	 * says why. No Monokulo order is made, to expire unused.
 	 */
 	public function test_a_customer_on_tor_is_not_sent_to_the_web(): void {
 		$this->connect();
@@ -178,6 +180,41 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame(['error' => 'Monero payments can\'t be made over Tor at this store right now. Please contact the store.', 'retry' => $this->module()->payLink((int)$cart->id, $order->secure_key)], $answer);
 		$this->assertStringContainsString('your Monokulo has no onion address', $this->logSince($before));
 		$this->assertSame($this->module()->orderStatus('pending'), $this->orderStatus((int)$order->id), 'placed, to pay another way');
+		$this->assertSame(['GET /api/v1'], array_map(static fn(array $r): string => $r['method'] . ' ' . $r['path'], self::$monokulo->requests()), 'no order was made');
+		$this->assertSame([], $this->rows('SELECT * FROM `' . _DB_PREFIX_ . 'monokulo_order`'));
+	}
+
+	/** Monokulo gained an onion address after the shop kept its entry: the entry is checked again, and the customer goes to the onion checkout. */
+	public function test_a_kept_entry_from_before_monokulo_had_an_onion_address_is_checked_again(): void {
+		$connection = $this->connect();
+		$this->repository()->keepEntry($connection, new Entry(Api::entry(onion: false), '"entry-0"', time() + 3600));
+		$this->monokuloAnswers('order_42');
+		$_SERVER['HTTP_HOST'] = 'shopxyz.onion';
+
+		try {
+			$answer = $this->pay($this->cart());
+		} finally {
+			$_SERVER['HTTP_HOST'] = self::HOST;
+		}
+
+		$this->assertSame(['redirect' => Api::ONION . '/checkout/order_42'], $answer);
+		$this->assertSame('"entry-0"', self::$monokulo->requests()[0]['headers']['if-none-match']);
+	}
+
+	/** An order without its onion checkout (an entry kept from before) still never sends a Tor customer to the web. */
+	public function test_an_order_without_an_onion_checkout_is_refused_over_tor_too(): void {
+		$this->connect();
+		self::$monokulo->entry(Api::entry());
+		self::$monokulo->respond('POST', '/api/v1/orders', 201, Api::order('order_42', onion: false));
+		$_SERVER['HTTP_HOST'] = 'shopxyz.onion';
+
+		try {
+			$answer = $this->pay($this->cart());
+		} finally {
+			$_SERVER['HTTP_HOST'] = self::HOST;
+		}
+
+		$this->assertSame('Monero payments can\'t be made over Tor at this store right now. Please contact the store.', $answer['error']);
 	}
 
 	/** On the shop's web address, the web checkout, whether or not Monokulo has an onion address. */

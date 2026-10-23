@@ -169,6 +169,35 @@ final class ClientTest extends TestCase {
 		$this->assertSame(['amount' => '1', 'currency' => 'EUR'], json_decode($create['body'], true));
 	}
 
+	/** The entry links itself on the onion address only while Monokulo has one; the kept entry answers. */
+	public function test_the_entry_says_whether_monokulo_has_an_onion_address(): void {
+		self::$monokulo->entry(Api::entry(onion: false));
+		$this->assertFalse($this->client()->hasOnion($this->connection()));
+
+		self::$monokulo->reset();
+		self::$monokulo->entry(Api::entry());
+		$client = $this->client();
+		$this->assertTrue($client->hasOnion($this->connection()));
+		$this->assertTrue($client->hasOnion($this->connection()));
+		$this->assertSame(['GET /api/v1'], $this->requests(), 'kept');
+	}
+
+	/** A kept entry without an onion address is checked again before saying no: Monokulo may have gained one. */
+	public function test_a_kept_entry_without_an_onion_address_is_checked_again(): void {
+		$kept = new Entry(Api::entry(onion: false), '"entry-0"', time() + 3600);
+		self::$monokulo->entry(Api::entry());
+
+		$this->assertTrue($this->client()->hasOnion($this->connection(entry: $kept)));
+		$this->assertSame(['GET /api/v1'], $this->requests());
+		$this->assertSame('"entry-0"', self::$monokulo->requests()[0]['headers']['if-none-match']);
+
+		// Still none: the 304 keeps the entry, and the answer is no.
+		self::$monokulo->reset();
+		self::$monokulo->entry(Api::entry(onion: false), etag: '"entry-0"');
+		$this->assertFalse($this->client()->hasOnion($this->connection(entry: $kept)));
+		$this->assertSame(['GET /api/v1'], $this->requests());
+	}
+
 	public function test_an_order_from_a_monokulo_without_an_onion_address_has_no_onion_checkout(): void {
 		self::$monokulo->api('order_1', onion: false);
 

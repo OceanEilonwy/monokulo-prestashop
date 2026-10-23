@@ -64,8 +64,9 @@ When your Monokulo has an onion address, connecting gives the shop its
 API entry there too (the Stores panel shows it), and every order its
 checkout on it (`mk:onion-checkout`). A customer browsing the shop's own
 `.onion` address is sent to that onion checkout, never to Monokulo's web
-address. If your Monokulo has no onion address, such a customer is told
-Monero can't be paid over Tor here, and the module's log says why. The
+address. If your Monokulo has no onion address (its API entry has no
+`mk:onion-api`), such a customer is told Monero can't be paid over Tor
+here, no Monokulo order is made, and the module's log says why. The
 shop's server itself always talks to Monokulo at the saved address.
 
 ### Upgrading from 0.2.0
