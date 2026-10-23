@@ -2,3 +2,5 @@
 /dist/
 /.phpunit.cache/
 /coverage/
+/src/config.xml
+/src/config_*.xml

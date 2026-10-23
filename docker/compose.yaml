@@ -1,0 +1,53 @@
+# PrestaShop with this module's repository mounted at /repo, on the host's
+# network: the shop is http://localhost:8093/ from the browser, from a
+# Monokulo on this machine and from the tests alike. Monokulo only sends its
+# connect flow back to an https address or to localhost, and the shop's
+# webhook address is built from the same host, so one address for everyone
+# is what makes the smoke test work. (Linux only: Docker Desktop's host
+# networking differs.)
+#
+# The ports (shop 8093, database 33063) are not OpenCart's (8090, 33061) or WooCommerce's (8092, 33062), so
+# the plugins' shops can run side by side.
+name: monokulo-prestashop
+
+services:
+  db:
+    image: mariadb:11.4
+    network_mode: host
+    command: ["--port=${DB_PORT:-33063}", "--bind-address=127.0.0.1"]
+    environment:
+      MARIADB_DATABASE: prestashop
+      MARIADB_USER: prestashop
+      MARIADB_PASSWORD: prestashop
+      MARIADB_ROOT_PASSWORD: prestashop-root
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      retries: 60
+
+  prestashop:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PS_VERSION: ${PS_VERSION:-9.2.0}
+        PHP_VERSION: ${PHP_VERSION:-8.5}
+    image: monokulo-prestashop:ps${PS_VERSION:-9.2.0}-php${PHP_VERSION:-8.5}
+    network_mode: host
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # docker/ps-setup installs, not the image's own start-up.
+      PS_INSTALL_AUTO: 0
+      # The image reads these too, when PrestaShop boots before it is installed.
+      DB_SERVER: 127.0.0.1
+      DB_NAME: prestashop
+      DB_USER: prestashop
+      DB_PASSWD: prestashop
+      DB_PORT: ${DB_PORT:-33063}
+      SHOP_DOMAIN: localhost:8093
+    volumes:
+      - ..:/repo
