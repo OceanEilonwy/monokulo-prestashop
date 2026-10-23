@@ -197,8 +197,12 @@ password `admin-password-1`.
 - **http**: real HTTP through Apache: the module upload, the settings page
   and the connect flow's redirects, a guest's checkout, webhooks.
 - **smoke**: a fresh Monokulo with an onion address
-  (`docker/monokulo-smoke.toml`): sign up, add a watch-only wallet,
-  connect, then a guest checkout lands on the Monokulo checkout, whose
+  (`docker/monokulo-smoke.toml`), its exchange rates from a stand-in for
+  CoinGecko (`tests/Support/fake-rates.php`): sign up, add a watch-only
+  wallet, connect; a guest checkout while the stand-in rate limits
+  Monokulo meets a real `rates-unavailable` (no Monokulo order, a try-again
+  message, the reason in the log); then the payment link lands on the
+  Monokulo checkout, whose
   status is pending, and its dashboard link opens the order there; the next orders use the kept API entry. Nothing is paid.
 
 The test shop leaves out PrestaShop's marketing and cloud modules

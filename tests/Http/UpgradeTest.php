@@ -114,6 +114,20 @@ final class UpgradeTest extends TestCase {
 		$this->assertEquals($connection, $repository->connection('shop.example'));
 	}
 
+	/** A shop on an early 0.3.0 kept each order's dashboard link: the column goes, the orders stay. */
+	public function test_over_http_the_kept_dashboard_link_is_dropped(): void {
+		Shop::exec("ALTER TABLE `mkupgrade_monokulo_order` ADD COLUMN `dashboard` VARCHAR(512) NOT NULL DEFAULT '' AFTER `currency`");
+		Shop::exec("UPDATE `mkupgrade_monokulo_order` SET `dashboard` = 'https://example.com/monokulo/stores/s/orders/order_old'");
+		$repository = new Repository($this->database());
+
+		$repository->install();
+
+		$this->assertNotContains('dashboard', $this->columns('order'));
+		$this->assertSame(['order_id' => 7, 'shop_id' => 1, 'host' => 'shop.example', 'latest' => true, 'paid_elsewhere' => false], $repository->findOrder('order_old'));
+		$repository->install();
+		$this->assertNotContains('dashboard', $this->columns('order'), 'again, nothing to do');
+	}
+
 	/** Its Monokulo orders are still found, and their table is as it was (the dashboard link comes with each webhook). */
 	public function test_over_http_upgraded_orders_are_still_found(): void {
 		$repository = new Repository($this->database());
