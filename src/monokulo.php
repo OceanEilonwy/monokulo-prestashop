@@ -602,8 +602,15 @@ class Monokulo extends PaymentModule
             $this->text('order_description_more')
         );
 
+        // A customer on the shop's .onion address stays on Tor: without an
+        // onion address Monokulo can't take them, so no order is made.
+        $onTor = $this->customerOnTor();
+        $client = $this->client();
         try {
-            $monokuloOrder = $this->client()->createOrder($connection, $body);
+            if ($onTor && !$client->hasOnion($connection)) {
+                return $this->refuseTor($order, $connection, $retry);
+            }
+            $monokuloOrder = $client->createOrder($connection, $body);
         } catch (ApiError $e) {
             $this->log()->error(sprintf('Creating the Monokulo order for order %d failed: HTTP %d: %s%s', $order->id, $e->status, $e->detail, $e->merchantHint()));
             $this->forward($connection);
@@ -616,8 +623,6 @@ class Monokulo extends PaymentModule
             return ['error' => $this->text('error_unreachable'), 'retry' => $retry];
         }
 
-        // A customer on the shop's .onion address stays on Tor.
-        $onTor = $this->customerOnTor();
         $checkout = $onTor ? $monokuloOrder['onion_checkout'] : $monokuloOrder['checkout'];
         $dashboard = $monokuloOrder['dashboard'] ?? '';
         if ($this->repository()->recordOrder($monokuloOrder['order_id'], (int) $order->id, (int) $order->id_shop, $connection->host, $body['amount'], $body['currency'], $dashboard, time()) && $checkout !== null) {
@@ -625,13 +630,24 @@ class Monokulo extends PaymentModule
             $this->log()->info(sprintf('Order %d: customer sent to Monokulo order %s%s.', $order->id, $monokuloOrder['order_id'], $onTor ? ' over Tor' : ''));
         }
         if ($checkout === null) {
-            $this->log()->error(sprintf('Order %d: the customer is on the shop\'s .onion address, but Monokulo order %s has no onion checkout: your Monokulo has no onion address. Set up Tor on your Monokulo, or don\'t offer the shop over Tor.', $order->id, $monokuloOrder['order_id']));
-            $this->forward($connection);
-
-            return ['error' => $this->text('error_no_tor'), 'retry' => $retry];
+            return $this->refuseTor($order, $connection, $retry);
         }
 
         return ['redirect' => $checkout];
+    }
+
+    /**
+     * A customer on the shop's .onion address, and a Monokulo with no onion
+     * address: they're told, never sent to its web address.
+     *
+     * @return array{error: string, retry: string}
+     */
+    private function refuseTor(Order $order, Connection $connection, string $retry): array
+    {
+        $this->log()->error(sprintf('Order %d: the customer is on the shop\'s .onion address, but your Monokulo has no onion address, so they can\'t pay over Tor. Set up Tor on your Monokulo, or don\'t offer the shop over Tor.', $order->id));
+        $this->forward($connection);
+
+        return ['error' => $this->text('error_no_tor'), 'retry' => $retry];
     }
 
     /**

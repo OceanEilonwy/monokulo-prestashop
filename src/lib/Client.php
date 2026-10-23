@@ -115,6 +115,31 @@ final class Client
     }
 
     /**
+     * Whether Monokulo has an onion address: its entry (as kept) links the
+     * same entry there, `mk:onion-api`, only then. Without it no order has
+     * an onion checkout. A kept entry without it is checked again first
+     * (a `304` keeps it), unless it was read just now: Monokulo may have
+     * gained one since.
+     *
+     * @throws ApiError|TransportError
+     */
+    public function hasOnion(Connection $connection): bool
+    {
+        $linked = static function (Entry $entry): bool {
+            $href = $entry->body['_links']['mk:onion-api']['href'] ?? null;
+
+            return is_string($href) && $href !== '';
+        };
+
+        if ($linked($this->entry($connection, false))) {
+            return true;
+        }
+
+        // Read from Monokulo during this request already: that's the answer.
+        return isset($this->read[$connection->secretToken]) ? false : $linked($this->entry($connection, true));
+    }
+
+    /**
      * The shop's warnings and errors, for the merchant to read in Monokulo,
      * with the entry's `send-logs` form. Best effort: nothing is sent when
      * the entry doesn't offer the form, and a failure here is ignored.
