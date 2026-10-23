@@ -42,13 +42,6 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertStringContainsString('You pay on a secure Monokulo payment page next', $options[0]->getAdditionalInformation());
 	}
 
-	/** Connected by an older version of this module: hidden until connected again. */
-	public function test_an_old_connection_hides_monero(): void {
-		$this->connect(self::HOST, '0');
-
-		$this->assertSame([], $this->options());
-	}
-
 	/** PrestaShop's payment preferences decide the currencies. */
 	public function test_a_currency_the_merchant_turned_off_hides_monero(): void {
 		$this->connect();
@@ -190,7 +183,7 @@ final class CheckoutTest extends ShopTestCase {
 	}
 
 	public function test_an_unreachable_monokulo_says_so(): void {
-		$this->repository()->saveConnection(new Connection(self::HOST, 'http://127.0.0.1:' . FakeMonokulo::freePort(), 'pk_test', 'sk_test', 'wh', Plugin::CONNECTION_VERSION, 1));
+		$this->repository()->saveConnection(new Connection(self::HOST, 'http://127.0.0.1:' . FakeMonokulo::freePort(), 'pk_test', 'sk_test', 'wh', 1));
 
 		$answer = $this->pay($this->cart());
 

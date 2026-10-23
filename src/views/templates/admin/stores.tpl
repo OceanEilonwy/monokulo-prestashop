@@ -19,14 +19,13 @@
           <td>
             {if $store.connected}
               {$store.connected|escape:'html':'UTF-8'}
-              {if $store.reconnect}<div class="text-danger">{$monokulo_text.reconnect_needed|escape:'html':'UTF-8'}</div>{/if}
             {else}
               {$monokulo_text.not_connected|escape:'html':'UTF-8'}
             {/if}
           </td>
           <td class="text-right">
             {if $monokulo_can_connect}
-              <a href="{$store.connect|escape:'html':'UTF-8'}" class="btn {if $store.connected && !$store.reconnect}btn-default{else}btn-primary{/if} monokulo-connect">{if $store.connected}{$monokulo_text.reconnect|escape:'html':'UTF-8'}{else}{$monokulo_text.connect|escape:'html':'UTF-8'}{/if}</a>
+              <a href="{$store.connect|escape:'html':'UTF-8'}" class="btn {if $store.connected}btn-default{else}btn-primary{/if} monokulo-connect">{if $store.connected}{$monokulo_text.reconnect|escape:'html':'UTF-8'}{else}{$monokulo_text.connect|escape:'html':'UTF-8'}{/if}</a>
             {/if}
           </td>
         </tr>

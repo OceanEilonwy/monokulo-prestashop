@@ -19,7 +19,7 @@ final class CheckoutOverHttpTest extends TestCase {
 	protected function setUp(): void {
 		$this->monokulo = new FakeMonokulo();
 		Shop::exec("DELETE FROM ps_monokulo_connection");
-		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', endpoint = " . Shop::quote($this->monokulo->url) . ", public_key = 'pk_test', secret_token = 'sk_test', webhook_secret = 'whsec', connection_version = " . Shop::quote(Plugin::CONNECTION_VERSION) . ", connected_at = 1");
+		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', endpoint = " . Shop::quote($this->monokulo->url) . ", public_key = 'pk_test', secret_token = 'sk_test', webhook_secret = 'whsec', connected_at = 1");
 	}
 
 	protected function tearDown(): void {

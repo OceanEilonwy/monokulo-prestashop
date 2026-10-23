@@ -49,7 +49,7 @@ final class ConnectReturnTest extends ShopTestCase {
 		$this->assertSame('prestashop/' . Plugin::VERSION, $request['headers']['monokulo-client']);
 
 		$connection = $this->repository()->connection(self::HOST);
-		$this->assertSame(['https://pay.example.com', 'pk_new', 'sk_new', 'whsec_new', Plugin::CONNECTION_VERSION], [$connection->endpoint, $connection->publicKey, $connection->secretToken, $connection->webhookSecret, $connection->version]);
+		$this->assertSame(['https://pay.example.com', 'pk_new', 'sk_new', 'whsec_new'], [$connection->endpoint, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
 		$this->assertTrue($this->module()->isConnected());
 	}
 
