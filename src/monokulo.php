@@ -70,7 +70,7 @@ class Monokulo extends PaymentModule
     {
         $this->name = 'monokulo';
         $this->tab = 'payments_gateways';
-        $this->version = '0.1.0';
+        $this->version = '0.2.0';
         $this->author = 'Monokulo';
         $this->need_instance = 0;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.99.99'];
@@ -101,7 +101,7 @@ class Monokulo extends PaymentModule
             || !$this->registerHook(['paymentOptions', 'displayPaymentReturn', 'displayOrderDetail'])) {
             return false;
         }
-        $this->repository()->install();
+        $this->repository()->install((string) Configuration::getGlobalValue(self::ADDRESS));
 
         $awaiting = $this->installAwaitingStatus();
         Configuration::updateGlobalValue(self::ADDRESS, 'https://www.monokulo.com');
@@ -433,7 +433,7 @@ class Monokulo extends PaymentModule
             return 'monokulo_connect_error=unreachable';
         }
 
-        $this->repository()->saveConnection(new Connection($host, $credentials['endpoint'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
+        $this->repository()->saveConnection(new Connection($host, $credentials['api'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
         $this->log()->info(sprintf('%s connected to Monokulo as %s.', $host, $credentials['public_key']));
 
         return 'monokulo_connected=1';
@@ -608,13 +608,13 @@ class Monokulo extends PaymentModule
 
             return ['error' => $this->text($e->customerMessageKey()), 'retry' => $retry];
         } catch (TransportError $e) {
-            $this->log()->error(sprintf('Creating the Monokulo order for order %d failed: could not reach %s: %s', $order->id, $connection->ordersUrl(), $e->getMessage()));
+            $this->log()->error(sprintf('Creating the Monokulo order for order %d failed: could not reach %s: %s', $order->id, $connection->api, $e->getMessage()));
             $this->forward($connection);
 
             return ['error' => $this->text('error_unreachable'), 'retry' => $retry];
         }
 
-        $checkout = $connection->checkoutUrl($monokuloOrder['order_id']);
+        $checkout = $monokuloOrder['checkout'];
         if ($this->repository()->recordOrder($monokuloOrder['order_id'], (int) $order->id, (int) $order->id_shop, $connection->host, $body['amount'], $body['currency'], time())) {
             $this->orders()->note($order, $this->text('note_started', ['%url%' => $checkout]));
             $this->log()->info(sprintf('Order %d: customer sent to Monokulo order %s.', $order->id, $monokuloOrder['order_id']));
@@ -799,6 +799,7 @@ class Monokulo extends PaymentModule
             'error_not_connected' => $this->trans('Monero payments are not set up for this store yet. Please contact the store owner.', [], $shop),
             'error_busy' => $this->trans('Monero payments are busy right now. Please wait a moment and try again.', [], $shop),
             'error_unavailable' => $this->trans('Monero payments are not available for this store right now. Please contact the store owner.', [], $shop),
+            'error_currency' => $this->trans('This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', [], $shop),
             'error_generic' => $this->trans('The Monero payment could not be started. Please try again, or contact the store.', [], $shop),
             'error_unreachable' => $this->trans('The Monero payment service could not be reached. Please try again shortly.', [], $shop),
             'try_again' => $this->trans('Try again', [], $shop),

@@ -23,9 +23,14 @@ if (!defined('_PS_VERSION_')) {
  */
 final class Connection
 {
+    /**
+     * @param string $api the API's entry, an absolute URL
+     *                    (`https://www.monokulo.com/api/v1`), which every other
+     *                    API address is found from
+     */
     public function __construct(
         public readonly string $host,
-        public readonly string $endpoint,
+        public readonly string $api,
         public readonly string $publicKey,
         public readonly string $secretToken,
         public readonly string $webhookSecret,
@@ -33,25 +38,19 @@ final class Connection
     ) {
     }
 
-    public function ordersUrl(): string
-    {
-        return rtrim($this->endpoint, '/') . '/pay/' . rawurlencode($this->publicKey) . '/orders';
-    }
-
-    /** Where the customer pays the order. */
-    public function checkoutUrl(string $orderId): string
-    {
-        return $this->ordersUrl() . '/' . rawurlencode($orderId);
-    }
-
+    /**
+     * Where a plugin's reports go: `logs` under the entry. The entry has
+     * no link to it, so it is the one address not found by following
+     * links.
+     */
     public function logsUrl(): string
     {
-        return rtrim($this->endpoint, '/') . '/pay/' . rawurlencode($this->publicKey) . '/logs';
+        return rtrim($this->api, '/') . '/logs';
     }
 
-    /** The order's page in the merchant's Monokulo dashboard. */
+    /** The order's page in the merchant's Monokulo, on the API's host. */
     public function dashboardOrderUrl(string $storeId, string $orderId): string
     {
-        return rtrim($this->endpoint, '/') . '/dashboard/stores/' . rawurlencode($storeId) . '/orders/' . rawurlencode($orderId);
+        return Url::origin($this->api) . '/stores/' . rawurlencode($storeId) . '/orders/' . rawurlencode($orderId);
     }
 }

@@ -48,7 +48,7 @@ final class Repository
         return [
             "CREATE TABLE IF NOT EXISTS `{$p}monokulo_connection` (
                 `host` VARCHAR(255) NOT NULL,
-                `endpoint` VARCHAR(255) NOT NULL,
+                `api` VARCHAR(255) NOT NULL,
                 `public_key` VARCHAR(128) NOT NULL,
                 `secret_token` VARCHAR(255) NOT NULL,
                 `webhook_secret` VARCHAR(255) NOT NULL,
@@ -85,11 +85,37 @@ final class Repository
         ];
     }
 
-    public function install(): void
+    /**
+     * Creates the tables, and brings ones an earlier version made up to
+     * date. `address` is the merchant's saved Monokulo address.
+     */
+    public function install(string $address): void
     {
         foreach ($this->schema() as $statement) {
             $this->db->execute($statement);
         }
+        $this->upgradeConnections($address);
+    }
+
+    /**
+     * Connections made before Monokulo's HTTP API (module 0.1.0) kept the
+     * address Monokulo gave them (`endpoint`) and no API entry. Their entry
+     * is `/api/v1` on the saved Monokulo address, so they keep working
+     * without connecting again. Uninstalling forgets the address but keeps
+     * the tables: then the old `endpoint` stands in for it.
+     */
+    private function upgradeConnections(string $address): void
+    {
+        $table = $this->table('connection');
+        if (!$this->db->row('SHOW COLUMNS FROM `' . $table . "` LIKE 'endpoint'")) {
+            return;
+        }
+        if (!$this->db->row('SHOW COLUMNS FROM `' . $table . "` LIKE 'api'")) {
+            $this->db->execute('ALTER TABLE `' . $table . '` ADD COLUMN `api` VARCHAR(255) NOT NULL DEFAULT \'\' AFTER `host`');
+        }
+        $base = $address !== '' ? $this->db->quote(rtrim($address, '/')) : "TRIM(TRAILING '/' FROM `endpoint`)";
+        $this->db->execute('UPDATE `' . $table . '` SET `api` = CONCAT(' . $base . ", '/api/v1') WHERE `api` = ''");
+        $this->db->execute('ALTER TABLE `' . $table . '` DROP COLUMN `endpoint`, ALTER COLUMN `api` DROP DEFAULT');
     }
 
     public function connection(string $host): ?Connection
@@ -101,7 +127,7 @@ final class Repository
 
         return new Connection(
             $row['host'],
-            $row['endpoint'],
+            $row['api'],
             $row['public_key'],
             $row['secret_token'],
             $row['webhook_secret'],
@@ -113,8 +139,8 @@ final class Repository
     {
         $q = fn (string $v): string => $this->db->quote($v);
         $this->db->execute(
-            'REPLACE INTO `' . $this->table('connection') . '` (`host`, `endpoint`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ('
-            . implode(', ', [$q($c->host), $q($c->endpoint), $q($c->publicKey), $q($c->secretToken), $q($c->webhookSecret), (int) $c->connectedAt])
+            'REPLACE INTO `' . $this->table('connection') . '` (`host`, `api`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ('
+            . implode(', ', [$q($c->host), $q($c->api), $q($c->publicKey), $q($c->secretToken), $q($c->webhookSecret), (int) $c->connectedAt])
             . ')'
         );
     }

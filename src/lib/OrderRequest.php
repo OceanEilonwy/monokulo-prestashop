@@ -17,7 +17,8 @@ if (!defined('_PS_VERSION_')) {
 }
 
 /**
- * The body of `POST /pay/{pk}/orders` for one PrestaShop order.
+ * The `create-order` form Monokulo's API entry offers, filled in for one
+ * PrestaShop order.
  *
  * The amount is the order total in the currency the customer saw, and
  * Monokulo converts it to XMR at its own rate: the shop never converts.

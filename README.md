@@ -43,6 +43,18 @@ With multistore, each shop connects on its own: a Monokulo store is one
 web address. Shops that share an address share one connection. **Connect
 again** replaces a shop's keys (Monokulo replaces its webhook too).
 
+Connecting gives the shop the store's secret key and the entry of
+Monokulo's [HTTP API](https://docs.monokulo.com/api/) (`/api/v1` on your
+Monokulo's address). From there the module follows the API's links and
+forms: it makes each order with the entry's `create-order` form and sends
+the customer to the order's checkout link (`/checkout/<order id>`).
+Monokulo's refusals are `application/problem+json`: the customer gets a
+plain message, and the module's log gets Monokulo's reason.
+
+Upgrading from 0.1.0 keeps your connections: the module takes the API's
+entry to be `/api/v1` on the saved Monokulo address, so there's no need to
+connect again.
+
 Which countries, currencies and customer groups see Monero is up to
 PrestaShop's own **Payment > Preferences**, as for any payment module.
 

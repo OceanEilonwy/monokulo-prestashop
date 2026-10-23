@@ -96,7 +96,7 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertCount(1, $payments);
 		$this->assertEqualsWithDelta((float)$order->total_paid, (float)$payments->getFirst()->amount, 0.001);
 		$this->assertStringContainsString('Monokulo: paid in full.', $this->lastNote());
-		$this->assertStringContainsString(self::$monokulo->url . '/dashboard/stores/917701c2-15c7-4bcb-bbc8-72d9ab28e785/orders/' . Vectors::orderId(), $this->lastNote());
+		$this->assertStringContainsString(self::$monokulo->url . '/stores/917701c2-15c7-4bcb-bbc8-72d9ab28e785/orders/' . Vectors::orderId(), $this->lastNote());
 	}
 
 	public function test_paid_in_xmr_is_paid_too(): void {

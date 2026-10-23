@@ -82,7 +82,7 @@ abstract class ShopTestCase extends TestCase {
 
 	/** Connects `host` to the stand-in Monokulo, as the connect flow would. */
 	protected function connect(string $host = self::HOST): Connection {
-		$connection = new Connection($host, self::$monokulo->url, 'pk_test', 'sk_test', Vectors::secret(), 1760000000);
+		$connection = new Connection($host, self::$monokulo->url . '/api/v1', 'pk_test', 'sk_test', Vectors::secret(), 1760000000);
 		$this->repository()->saveConnection($connection);
 
 		return $connection;
