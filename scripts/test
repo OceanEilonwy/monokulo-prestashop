@@ -52,7 +52,9 @@ install)
 	suite http --group installer
 	# From here on the shop runs src/ itself, so a change is live at once and
 	# coverage names src/ files.
-	compose exec -T prestashop sh -c 'rm -rf /var/www/html/modules/monokulo && ln -s /repo/src /var/www/html/modules/monokulo && rm -rf /var/www/html/var/cache/*'
+	# Apache's workers still know the old folder (realpath and opcache
+	# caches), and would load the module twice: a graceful restart forgets it.
+	compose exec -T prestashop sh -c 'rm -rf /var/www/html/modules/monokulo && ln -s /repo/src /var/www/html/modules/monokulo && rm -rf /var/www/html/var/cache/* && apache2ctl -k graceful'
 	;;
 down)
 	compose down -v
