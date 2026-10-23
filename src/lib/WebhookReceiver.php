@@ -68,7 +68,7 @@ final class WebhookReceiver
             return 200;
         }
         try {
-            $this->updater->apply($order['order_id'], $decision, $event, $order['latest'], $order['paid_elsewhere'], $order['dashboard']);
+            $this->updater->apply($order['order_id'], $decision, $event, $order['latest'], $order['paid_elsewhere']);
             if ($decision->paid) {
                 $this->repository->markPaid($event->orderId, $now);
             }

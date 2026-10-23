@@ -8,8 +8,9 @@ namespace Monokulo\PrestaShop\Tests\Support;
  * document, so the stand-in Monokulo answers with real exchanges: the entry
  * and orders as the store's secret key sees them, the handshake, problems.
  *
- * The recordings are of a Monokulo with an onion address; `onion: false`
- * leaves its onion links out, as a Monokulo without one answers.
+ * Each answer is recorded from a Monokulo without an onion address (`sk`,
+ * `no-key`, …) and from one with (`sk-with-onion`, …): `onion` picks which.
+ * They tell one story: the order made is the one read and linked.
  */
 final class Api {
 	/** The onion address the recordings were made with. */
@@ -52,33 +53,19 @@ final class Api {
 
 	/** @return array<string, mixed> the entry, `GET /api/v1`, as the store's secret key sees it */
 	public static function entry(bool $onion = true): array {
-		$entry = self::example('get', '/api/v1', '200', 'sk');
-		if (!$onion) {
-			unset($entry['_links']['mk:onion-api']);
-		}
-
-		return $entry;
+		return self::example('get', '/api/v1', '200', $onion ? 'sk-with-onion' : 'sk');
 	}
 
 	/** @return array<string, mixed> order `orderId` as the create-order form answers the secret key */
 	public static function order(string $orderId, bool $onion = true): array {
-		$example = self::example('post', '/api/v1/orders', '201', 'sk');
-		$order = json_decode(str_replace($example['order_id'], $orderId, (string)json_encode($example)), true);
-		if (!$onion) {
-			unset($order['_links']['mk:onion-checkout']);
-		}
+		$example = self::example('post', '/api/v1/orders', '201', $onion ? 'sk-with-onion' : 'sk');
 
-		return $order;
+		return json_decode(str_replace($example['order_id'], $orderId, (string)json_encode($example)), true);
 	}
 
 	/** @return array<string, mixed> the plugin handshake's answer (`POST /plugins/connect/{slug}/finish`) */
 	public static function finished(bool $onion = true): array {
-		$answer = self::operation('post', '/plugins/connect/{slug}/finish')['responses']['200']['content']['application/json']['example'];
-		if (!$onion) {
-			unset($answer['onion_api']);
-		}
-
-		return $answer;
+		return self::example('post', '/plugins/connect/{slug}/finish', '200', $onion ? 'no-key-with-onion' : 'no-key');
 	}
 
 	/** @return array<string, mixed> the recorded problem `name` that `method path` answers with */

@@ -13,8 +13,7 @@ use PHPUnit\Framework\TestCase;
  * (upgrade/upgrade-0.3.0.php, or installing again over the kept tables)
  * without connecting again: its connections and orders are kept, and get
  * the columns 0.3.0 added. Its connection has no onion address until it
- * connects again; an order made before has no dashboard link until the
- * customer goes back to pay it.
+ * connects again.
  *
  * Against the shop's real database, in tables of their own (the schema
  * change can't run inside a rolled-back transaction).
@@ -115,16 +114,16 @@ final class UpgradeTest extends TestCase {
 		$this->assertEquals($connection, $repository->connection('shop.example'));
 	}
 
-	/** Its Monokulo orders are still found; one paid again from the shop gets its dashboard link. */
+	/** Its Monokulo orders are still found, and their table is as it was (the dashboard link comes with each webhook). */
 	public function test_over_http_upgraded_orders_are_still_found(): void {
 		$repository = new Repository($this->database());
+		$before = $this->columns('order');
 
 		$repository->install();
 
-		$this->assertContains('dashboard', $this->columns('order'));
-		$this->assertSame(['order_id' => 7, 'shop_id' => 1, 'host' => 'shop.example', 'dashboard' => '', 'latest' => true, 'paid_elsewhere' => false], $repository->findOrder('order_old'));
-		$this->assertFalse($repository->recordOrder('order_old', 7, 1, 'shop.example', '12.5', 'EUR', 'https://example.com/monokulo/stores/s/orders/order_old', 1760000050));
-		$this->assertSame('https://example.com/monokulo/stores/s/orders/order_old', $repository->findOrder('order_old')['dashboard']);
+		$this->assertSame($before, $this->columns('order'));
+		$this->assertSame(['order_id' => 7, 'shop_id' => 1, 'host' => 'shop.example', 'latest' => true, 'paid_elsewhere' => false], $repository->findOrder('order_old'));
+		$this->assertFalse($repository->recordOrder('order_old', 7, 1, 'shop.example', '12.5', 'EUR', 1760000050), 'already known');
 		$repository->markPaid('order_old', 1760000100);
 		$this->assertSame('1760000100', Shop::rows("SELECT `paid_at` FROM `mkupgrade_monokulo_order` WHERE `monokulo_order_id` = 'order_old'")[0]['paid_at']);
 	}

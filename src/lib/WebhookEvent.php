@@ -19,6 +19,8 @@ if (!defined('_PS_VERSION_')) {
 /**
  * The parts of a webhook body (api_version 2) this plugin acts on. Fields it
  * doesn't need are ignored, and fields monokulo adds later don't break it.
+ * `dashboard` is the order's page on the merchant's dashboard, the body's
+ * `mk:dashboard-order` link (absolute, as every webhook link is), or null.
  */
 final class WebhookEvent
 {
@@ -27,6 +29,7 @@ final class WebhookEvent
         public readonly string $eventId,
         public readonly string $orderId,
         public readonly ?string $txid,
+        public readonly ?string $dashboard,
     ) {
     }
 
@@ -44,6 +47,8 @@ final class WebhookEvent
         }
         $text = static fn (string $key): ?string => isset($data[$key]) && is_string($data[$key]) && $data[$key] !== '' ? $data[$key] : null;
 
-        return new self($data['event'], $data['event_id'], $data['order_id'], $text('txid'));
+        $dashboard = $data['_links']['mk:dashboard-order']['href'] ?? null;
+
+        return new self($data['event'], $data['event_id'], $data['order_id'], $text('txid'), is_string($dashboard) && $dashboard !== '' ? $dashboard : null);
     }
 }

@@ -624,9 +624,8 @@ class Monokulo extends PaymentModule
         }
 
         $checkout = $onTor ? $monokuloOrder['onion_checkout'] : $monokuloOrder['checkout'];
-        $dashboard = $monokuloOrder['dashboard'] ?? '';
-        if ($this->repository()->recordOrder($monokuloOrder['order_id'], (int) $order->id, (int) $order->id_shop, $connection->host, $body['amount'], $body['currency'], $dashboard, time()) && $checkout !== null) {
-            $this->orders()->note($order, $this->text('note_started', ['%url%' => $checkout]) . ($dashboard !== '' ? ' ' . $this->text('see_in_monokulo', ['%url%' => $dashboard]) : ''));
+        if ($this->repository()->recordOrder($monokuloOrder['order_id'], (int) $order->id, (int) $order->id_shop, $connection->host, $body['amount'], $body['currency'], time()) && $checkout !== null) {
+            $this->orders()->note($order, $this->text('note_started', ['%url%' => $checkout]));
             $this->log()->info(sprintf('Order %d: customer sent to Monokulo order %s%s.', $order->id, $monokuloOrder['order_id'], $onTor ? ' over Tor' : ''));
         }
         if ($checkout === null) {
@@ -837,6 +836,7 @@ class Monokulo extends PaymentModule
             'error_not_payable' => $this->trans('This order is not waiting for a payment.', [], $shop),
             'error_not_connected' => $this->trans('Monero payments are not set up for this store yet. Please contact the store owner.', [], $shop),
             'error_busy' => $this->trans('Monero payments are busy right now. Please wait a moment and try again.', [], $shop),
+            'error_try_again' => $this->trans('Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', [], $shop),
             'error_unavailable' => $this->trans('Monero payments are not available for this store right now. Please contact the store owner.', [], $shop),
             'error_currency' => $this->trans('This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', [], $shop),
             'error_generic' => $this->trans('The Monero payment could not be started. Please try again, or contact the store.', [], $shop),
@@ -851,6 +851,7 @@ class Monokulo extends PaymentModule
             'note_paid' => $this->trans('Monokulo: paid in full.', [], $admin),
             'note_overpaid' => $this->trans('Monokulo: paid, with more than the amount due. The excess is not refunded automatically: refund it yourself if needed.', [], $admin),
             'note_expired' => $this->trans('Monokulo: the payment window closed without full payment. Any funds received stay at the payment address; refund them yourself if needed.', [], $admin),
+            'note_cancelled' => $this->trans('Monokulo: the order was cancelled in Monokulo, so it takes no payment any more. Any funds received stay at the payment address; refund them yourself if needed.', [], $admin),
             'note_double_spend_detected' => $this->trans('Monokulo: FRAUD ALERT. A payment to this order was double-spent and no longer counts (transaction %transaction%). If this changed the order status, that is a separate entry. Check this order before sending anything.', [], $admin),
             'note_double_spend_reversed' => $this->trans('Monokulo: the earlier double-spend alert for this order (transaction %transaction%) was wrong and is withdrawn. If this changed the order status, that is a separate entry.', [], $admin),
             'note_earlier_request' => $this->trans('(From an earlier payment request for this order, made before its total changed.)', [], $admin),
@@ -876,7 +877,7 @@ class Monokulo extends PaymentModule
             'status_paid' => $this->trans('Paid', [], $admin),
             'status_paid_help' => $this->trans('Paid in full (or more). This status\'s email tells the customer.', [], $admin),
             'status_expired' => $this->trans('Expired', [], $admin),
-            'status_expired_help' => $this->trans('The payment window closed without full payment.', [], $admin),
+            'status_expired_help' => $this->trans('The payment window closed without full payment, or the order was cancelled in Monokulo.', [], $admin),
             'stores' => $this->trans('Stores', [], $admin),
             'stores_help' => $this->trans('Each shop connects to a store in your Monokulo, found by the shop\'s web address. Shops that share an address share one connection.', [], $admin),
             'connected_as' => $this->trans('Connected as %key% since %date%', [], $admin),

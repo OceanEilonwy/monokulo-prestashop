@@ -120,9 +120,10 @@ final class CheckoutTest extends ShopTestCase {
 			'idempotency_key'        => 'ps:1:' . $order->id . ':' . $amount . ':GBP',
 		], json_decode($request['body'], true));
 
-		$dashboard = self::$monokulo->url . Api::order('order_42')['_links']['mk:dashboard-order']['href'];
-		$this->assertSame(['Monokulo: the customer was sent to pay this order with Monero here: ' . $checkout . ' In Monokulo: ' . $dashboard], $this->notes((int)$order->id));
-		$this->assertSame([['monokulo_order_id' => 'order_42', 'id_order' => (string)$order->id, 'id_shop' => '1', 'host' => self::HOST, 'amount' => $amount, 'currency' => 'GBP', 'dashboard' => $dashboard]], $this->rows('SELECT `monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency`, `dashboard` FROM `' . _DB_PREFIX_ . 'monokulo_order`'));
+		// The merchant's link to the order in Monokulo comes with its webhooks, not from here.
+		$this->assertSame(['Monokulo: the customer was sent to pay this order with Monero here: ' . $checkout], $this->notes((int)$order->id));
+		$this->assertSame([['monokulo_order_id' => 'order_42', 'id_order' => (string)$order->id, 'id_shop' => '1', 'host' => self::HOST, 'amount' => $amount, 'currency' => 'GBP']], $this->rows('SELECT `monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency` FROM `' . _DB_PREFIX_ . 'monokulo_order`'));
+		$this->assertNotContains('dashboard', array_column($this->rows('SHOW COLUMNS FROM `' . _DB_PREFIX_ . 'monokulo_order`'), 'Field'), 'nothing keeps the dashboard link');
 	}
 
 	/** A Monokulo served under a path: the module follows its links there. */
@@ -134,7 +135,6 @@ final class CheckoutTest extends ShopTestCase {
 
 		$this->assertSame(['redirect' => self::$monokulo->url . '/monokulo/checkout/order_42'], $answer);
 		$this->assertSame(['/monokulo/api/v1', '/monokulo/api/v1/orders'], array_column(self::$monokulo->requests(), 'path'));
-		$this->assertStringStartsWith(self::$monokulo->url . '/monokulo/stores/', $this->rows('SELECT `dashboard` FROM `' . _DB_PREFIX_ . 'monokulo_order`')[0]['dashboard']);
 	}
 
 	/**
@@ -155,7 +155,7 @@ final class CheckoutTest extends ShopTestCase {
 
 		$this->assertSame(['redirect' => Api::ONION . '/checkout/order_42'], $answer);
 		$order = \Order::getByCartId((int)$cart->id);
-		$this->assertStringStartsWith('Monokulo: the customer was sent to pay this order with Monero here: ' . Api::ONION . '/checkout/order_42 ', $this->notes((int)$order->id)[0]);
+		$this->assertSame(['Monokulo: the customer was sent to pay this order with Monero here: ' . Api::ONION . '/checkout/order_42'], $this->notes((int)$order->id));
 	}
 
 	/**
@@ -257,6 +257,8 @@ final class CheckoutTest extends ShopTestCase {
 			'busy'          => [429, Api::problem('rate-limited', 429, 'Too many requests', 'slow down'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: slow down (rate limited'],
 			'key rejected'  => [401, Api::recordedProblem('get', '/api/v1', 'unauthorized'), 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
 			'not priced'    => [400, Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount'), 'This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', 'HTTP 400: ' . Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount')['detail'] . ' (Monokulo cannot price this order'],
+			'no rate'       => [503, Api::problem('rates-unavailable', 503, 'No exchange rate right now', 'no GBP rate') + ['retry_after' => 30], 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: no GBP rate (Monokulo has no exchange rate for this currency right now'],
+			'engine busy'   => [503, Api::problem('engine-unavailable', 503, 'Payment engine unavailable', 'busy'), 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: busy (Monokulo\'s payment engine is unavailable right now. No Monokulo order was made'],
 			'anything else' => [500, 'oops', 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: oops'],
 		];
 	}
@@ -334,6 +336,26 @@ final class CheckoutTest extends ShopTestCase {
 		$keys = array_map(static fn(array $r): string => json_decode($r['body'], true)['idempotency_key'], $posts);
 		$this->assertCount(3, $keys);
 		$this->assertCount(1, array_unique($keys));
+		$this->assertCount(1, $this->notes((int)$order->id));
+	}
+
+	/**
+	 * No exchange rate, then one: trying again from the payment link sends
+	 * the same request, with the same idempotency key, and makes the order.
+	 */
+	public function test_trying_again_after_no_rate_sends_the_same_request(): void {
+		$this->connect();
+		$this->monokuloAnswers('', 503, Api::problem('rates-unavailable', 503, 'No exchange rate right now', 'no GBP rate'));
+		$cart = $this->cart();
+		$this->assertArrayHasKey('error', $this->pay($cart));
+		$order = \Order::getByCartId((int)$cart->id);
+
+		$this->monokuloAnswers('order_1');
+		$this->assertSame(['redirect' => self::$monokulo->url . '/checkout/order_1'], $this->module()->payFromLink((int)$cart->id, $order->secure_key));
+
+		$posts = array_values(array_filter(self::$monokulo->requests(), static fn(array $r): bool => $r['method'] === 'POST'));
+		$this->assertCount(2, $posts);
+		$this->assertSame($posts[0]['body'], $posts[1]['body'], 'the same order, the same idempotency key');
 		$this->assertCount(1, $this->notes((int)$order->id));
 	}
 

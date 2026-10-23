@@ -25,6 +25,12 @@ final class WebhookEventTest extends TestCase {
 		$this->assertNull(WebhookEvent::parse(Vectors::delivery('order.paid')['body'])->txid);
 	}
 
+	/** Every delivery links the order's page on the merchant's dashboard, absolute. */
+	#[DataProviderExternal(Vectors::class, 'deliveryCases')]
+	public function test_every_published_delivery_links_the_dashboard(array $delivery): void {
+		$this->assertMatchesRegularExpression('#\Ahttps://[^/]+/stores/[^/]+/orders/' . Vectors::orderId() . '\z#', (string)WebhookEvent::parse($delivery['body'])->dashboard);
+	}
+
 	public static function notEnvelopes(): array {
 		return [
 			'not JSON'          => ['nope'],
@@ -48,5 +54,6 @@ final class WebhookEventTest extends TestCase {
 
 		$this->assertSame('order.refunded', $event->event);
 		$this->assertNull($event->txid);
+		$this->assertNull($event->dashboard);
 	}
 }

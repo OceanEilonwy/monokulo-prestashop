@@ -70,7 +70,7 @@ final class CheckoutOverHttpTest extends TestCase {
 		$answer = Storefront::payWithMonero($browser, Storefront::toPayment($browser));
 
 		$this->assertSame(200, $answer->status);
-		$this->assertStringContainsString('The Monero payment could not be started. Please try again, or contact the store.', $answer->text());
+		$this->assertStringContainsString('Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', $answer->text());
 		$this->assertMatchesRegularExpression('/id="monokulo-retry"[^>]*href="([^"]+)"/', $answer->body);
 		preg_match('/id="monokulo-retry"[^>]*href="([^"]+)"/', $answer->body, $m);
 		$this->monokulo->api('order_retry');

@@ -20,6 +20,7 @@ final class StatusPolicyTest extends TestCase {
 		'order.paid'                  => [Decision::STATUS_PAID, 'note_paid', true],
 		'order.overpaid'              => [Decision::STATUS_PAID, 'note_overpaid', true],
 		'order.expired'               => [Decision::STATUS_EXPIRED, 'note_expired', false],
+		'order.cancelled'             => [Decision::STATUS_EXPIRED, 'note_cancelled', false],
 		'order.double_spend_detected' => [null, 'note_double_spend_detected', false],
 		'order.double_spend_reversed' => [null, 'note_double_spend_reversed', false],
 	];

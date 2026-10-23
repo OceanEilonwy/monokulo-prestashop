@@ -2,7 +2,6 @@
 namespace Monokulo\PrestaShop\Tests\Front;
 
 use Monokulo\PrestaShop\Logger;
-use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\ShopTestCase;
 use Monokulo\PrestaShop\Tests\Support\Vectors;
 use Monokulo\PrestaShop\Trace;
@@ -25,12 +24,12 @@ final class WebhookTest extends ShopTestCase {
 		$this->connect();
 		// As "Pay with Monero" leaves it: placed, mapped to the Monokulo order the vectors are about.
 		$this->order = $this->placedOrder();
-		$this->repository()->recordOrder(Vectors::orderId(), (int)$this->order->id, 1, self::HOST, '14.28', 'GBP', $this->dashboard(), 1760000000);
+		$this->repository()->recordOrder(Vectors::orderId(), (int)$this->order->id, 1, self::HOST, '14.28', 'GBP', 1760000000);
 	}
 
-	/** The order's page on the merchant's dashboard, as the create-order form gave it. */
-	private function dashboard(): string {
-		return self::$monokulo->url . Api::order(Vectors::orderId())['_links']['mk:dashboard-order']['href'];
+	/** The order's page on the merchant's dashboard, as the delivery `name` links it. */
+	private function dashboard(string $name): string {
+		return json_decode(Vectors::delivery($name)['body'], true)['_links']['mk:dashboard-order']['href'];
 	}
 
 	/** Delivers `body` signed with `signature` as of the vectors' clock; returns the HTTP status. */
@@ -102,14 +101,26 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertCount(1, $payments);
 		$this->assertEqualsWithDelta((float)$order->total_paid, (float)$payments->getFirst()->amount, 0.001);
 		$this->assertStringContainsString('Monokulo: paid in full.', $this->lastNote());
-		$this->assertStringEndsWith(' In Monokulo: ' . $this->dashboard(), $this->lastNote());
+		$this->assertStringEndsWith(' In Monokulo: ' . $this->dashboard('order.paid'), $this->lastNote());
+		$this->assertStringStartsWith('https://', $this->dashboard('order.paid'), 'absolute, as every webhook link is');
 	}
 
-	/** An order made before 0.3.0 has no dashboard link kept: its notes go without one. */
-	public function test_an_order_without_a_dashboard_link_gets_notes_without_one(): void {
-		$this->db()->execute('UPDATE `' . _DB_PREFIX_ . "monokulo_order` SET `dashboard` = ''");
+	/** Every event links the merchant to the order in Monokulo, from that delivery's own links. */
+	public function test_every_note_links_the_order_in_monokulo(): void {
+		foreach (Vectors::deliveries() as $name => $delivery) {
+			$this->deliver($delivery['body'], $delivery['headers']['X-Monokulo-Signature']);
+			$this->assertStringEndsWith(' In Monokulo: ' . $this->dashboard($name), $this->lastNote(), $name);
+		}
+	}
 
-		$this->assertSame(200, $this->deliverVector('order.paid'));
+	/** A delivery that doesn't link the dashboard (none does today) gets a note without the link. */
+	public function test_a_delivery_without_a_dashboard_link_gets_a_note_without_one(): void {
+		$event = json_decode(Vectors::delivery('order.paid')['body'], true);
+		unset($event['_links']['mk:dashboard-order']);
+		$body = (string)json_encode($event);
+		$t = Vectors::sentAt();
+
+		$this->assertSame(200, $this->deliver($body, 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, Vectors::secret())));
 
 		$this->assertSame('Monokulo: paid in full.', $this->lastNote());
 	}
@@ -135,6 +146,30 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertStringContainsString('payment window closed', $this->lastNote());
 		\Cache::clean('*');
 		$this->assertSame($stock + 1, (int)\StockAvailable::getQuantityAvailableByProduct(self::MUG), 'the mug is back in stock');
+	}
+
+	/**
+	 * Cancelled in Monokulo (only its POS cancels, so a shop order shouldn't
+	 * be): as expired, the merchant's "Expired" status, with its own note.
+	 */
+	public function test_cancelled_goes_where_expired_goes(): void {
+		$bankWire = (int)\Configuration::get('PS_OS_BANKWIRE');
+		$this->setting('MONOKULO_OS_EXPIRED', (string)$bankWire);
+
+		$this->assertSame(200, $this->deliverVector('order.cancelled'));
+
+		$this->assertSame($bankWire, $this->currentStatus());
+		$this->assertStringStartsWith('Monokulo: the order was cancelled in Monokulo, so it takes no payment any more.', $this->lastNote());
+	}
+
+	/** Cancelled, then paid anyway (money sent to it is still recorded): paid. */
+	public function test_a_cancelled_order_paid_late_is_paid(): void {
+		$this->deliverVector('order.cancelled');
+
+		$this->assertSame(200, $this->deliverVector('order.paid from a Monokulo with an onion address'));
+
+		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
+		$this->assertSame(1, $this->payments());
 	}
 
 	/** A double spend only adds a note: the status change, if any, comes as its own event. */
@@ -163,6 +198,11 @@ final class WebhookTest extends ShopTestCase {
 
 		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
 		$this->assertStringContainsString('payment window closed', $this->lastNote());
+		$this->assertStringContainsString('The order was already paid, so its status is left as it is', $this->lastNote());
+
+		$this->assertSame(200, $this->deliverVector('order.cancelled'));
+		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
+		$this->assertStringContainsString('was cancelled in Monokulo', $this->lastNote());
 		$this->assertStringContainsString('The order was already paid, so its status is left as it is', $this->lastNote());
 	}
 
@@ -245,7 +285,7 @@ final class WebhookTest extends ShopTestCase {
 
 	/** The order's total changed after its first payment request (the vectors' order): a newer one is the current one. */
 	private function newerRequest(): string {
-		$this->repository()->recordOrder('order_newer', (int)$this->order->id, 1, self::HOST, '20.00', 'GBP', '', 1760000001);
+		$this->repository()->recordOrder('order_newer', (int)$this->order->id, 1, self::HOST, '20.00', 'GBP', 1760000001);
 
 		return 'order_newer';
 	}
@@ -272,13 +312,13 @@ final class WebhookTest extends ShopTestCase {
 		$this->newerRequest();
 		$stock = (int)\StockAvailable::getQuantityAvailableByProduct(self::MUG);
 
-		foreach (['order.unconfirmed', 'order.partial', 'order.expired'] as $name) {
+		foreach (['order.unconfirmed', 'order.partial', 'order.expired', 'order.cancelled'] as $name) {
 			$this->assertSame(200, $this->deliverVector($name), $name);
 			$this->assertSame($this->awaiting(), $this->currentStatus(), $name);
 			$this->assertStringContainsString('earlier payment request for this order', $this->lastNote(), $name);
 		}
-		$this->assertStringContainsString('payment window closed', $this->lastNote());
-		$this->assertCount(3, $this->notes((int)$this->order->id));
+		$this->assertStringContainsString('was cancelled in Monokulo', $this->lastNote());
+		$this->assertCount(4, $this->notes((int)$this->order->id));
 		\Cache::clean('*');
 		$this->assertSame($stock, (int)\StockAvailable::getQuantityAvailableByProduct(self::MUG), 'not cancelled, so no stock back');
 	}
@@ -293,13 +333,24 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertStringNotContainsString('earlier payment request', $this->lastNote());
 	}
 
-	/** Paid by an earlier request: the current one expiring later leaves it paid. */
+	/** The current request cancelled moves the order as expired does. */
+	public function test_the_current_request_cancelled_moves_the_order(): void {
+		$newer = $this->newerRequest();
+
+		$this->assertSame(200, $this->deliverFor('order.cancelled', $newer));
+
+		$this->assertSame((int)\Configuration::get('PS_OS_CANCELED'), $this->currentStatus());
+		$this->assertStringNotContainsString('earlier payment request', $this->lastNote());
+	}
+
+	/** Paid by an earlier request: the current one expiring or cancelled later leaves it paid. */
 	public function test_paid_by_an_earlier_request_never_goes_back(): void {
 		$newer = $this->newerRequest();
 		$this->deliverVector('order.paid');
 
 		$this->assertSame(200, $this->deliverFor('order.partial', $newer));
 		$this->assertSame(200, $this->deliverFor('order.expired', $newer));
+		$this->assertSame(200, $this->deliverFor('order.cancelled', $newer));
 
 		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
 		$this->assertStringContainsString('The order was already paid, so its status is left as it is', $this->lastNote());

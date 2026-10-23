@@ -81,13 +81,13 @@ final class Client
     /**
      * Makes an order with the entry's `create-order` form. Returns its id
      * and links, absolute: `checkout` (`mk:checkout`), where the customer
-     * pays; `onion_checkout` (`mk:onion-checkout`), the same page on
-     * Monokulo's onion address, null when it has none; and `dashboard`
-     * (`mk:dashboard-order`), the order's page for the merchant.
+     * pays; and `onion_checkout` (`mk:onion-checkout`), the same page on
+     * Monokulo's onion address, null when it has none. (The order's page on
+     * the merchant's dashboard comes with each of its webhooks.)
      *
      * @param array<string, mixed> $body see OrderRequest
      *
-     * @return array{order_id: string, checkout: string, onion_checkout: string|null, dashboard: string|null}
+     * @return array{order_id: string, checkout: string, onion_checkout: string|null}
      *
      * @throws ApiError|TransportError
      */
@@ -110,7 +110,6 @@ final class Client
             'order_id' => $orderId,
             'checkout' => $checkout,
             'onion_checkout' => $link('mk:onion-checkout'),
-            'dashboard' => $link('mk:dashboard-order'),
         ];
     }
 
@@ -317,7 +316,12 @@ final class Client
                 default => $response->body,
             };
 
-            throw new ApiError($response->status, $detail, $problem['type'] ?? '');
+            $retryAfter = $problem['retry_after'] ?? null;
+            if (!is_int($retryAfter) && ctype_digit($response->header('Retry-After'))) {
+                $retryAfter = (int) $response->header('Retry-After');
+            }
+
+            throw new ApiError($response->status, $detail, $problem['type'] ?? '', is_int($retryAfter) ? $retryAfter : null);
         }
         if (!is_array($data)) {
             throw new ApiError($response->status, 'not JSON: ' . $response->body);
