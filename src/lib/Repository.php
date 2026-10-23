@@ -99,7 +99,7 @@ final class Repository
         }
         $this->upgradeConnections($address);
         // 0.1.0 didn't note when a Monokulo order was paid.
-        if (!$this->db->row('SHOW COLUMNS FROM `' . $this->table('order') . "` LIKE 'paid_at'")) {
+        if (!$this->hasColumn($this->table('order'), 'paid_at')) {
             $this->db->execute('ALTER TABLE `' . $this->table('order') . '` ADD COLUMN `paid_at` INT(11) NULL DEFAULT NULL AFTER `created_at`');
         }
     }
@@ -114,10 +114,10 @@ final class Repository
     private function upgradeConnections(string $address): void
     {
         $table = $this->table('connection');
-        if (!$this->db->row('SHOW COLUMNS FROM `' . $table . "` LIKE 'endpoint'")) {
+        if (!$this->hasColumn($table, 'endpoint')) {
             return;
         }
-        if (!$this->db->row('SHOW COLUMNS FROM `' . $table . "` LIKE 'api'")) {
+        if (!$this->hasColumn($table, 'api')) {
             $this->db->execute('ALTER TABLE `' . $table . '` ADD COLUMN `api` VARCHAR(255) NOT NULL DEFAULT \'\' AFTER `host`');
         }
         $base = $address !== '' ? $this->db->quote(rtrim($address, '/')) : "TRIM(TRAILING '/' FROM `endpoint`)";
@@ -258,6 +258,15 @@ final class Repository
     public function releaseEvent(string $eventId): void
     {
         $this->db->execute('DELETE FROM `' . $this->table('event') . '` WHERE `event_id` = ' . $this->db->quote($eventId));
+    }
+
+    /** Whether `table` has `column`. (A SELECT: PrestaShop adds LIMIT 1 to a row's query.) */
+    private function hasColumn(string $table, string $column): bool
+    {
+        return (bool) $this->db->row(
+            'SELECT `COLUMN_NAME` FROM `information_schema`.`COLUMNS` WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = '
+            . $this->db->quote($table) . ' AND `COLUMN_NAME` = ' . $this->db->quote($column)
+        );
     }
 
     private function table(string $name): string
