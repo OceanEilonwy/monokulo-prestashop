@@ -27,7 +27,7 @@ final class WebhookOverHttpTest extends TestCase {
 		Shop::exec("DELETE FROM ps_monokulo_connection");
 		Shop::exec("DELETE FROM ps_monokulo_order");
 		Shop::exec("DELETE FROM ps_monokulo_event");
-		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', endpoint = 'https://pay.example.com', public_key = 'pk_test', secret_token = 'sk_test', webhook_secret = " . Shop::quote(Vectors::secret()) . ", connected_at = 1");
+		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', api = 'https://pay.example.com/api/v1', public_key = 'pk_test', secret_token = 'sk_test', webhook_secret = " . Shop::quote(Vectors::secret()) . ", connected_at = 1");
 		$this->orderId = Shop::placeOrder();
 		$this->placed = $this->orderStatus();
 		Shop::exec("INSERT INTO ps_monokulo_order SET monokulo_order_id = " . Shop::quote(Vectors::orderId()) . ", id_order = " . $this->orderId . ", id_shop = 1, host = 'localhost:8093', amount = '14.28', currency = 'GBP', created_at = 1");

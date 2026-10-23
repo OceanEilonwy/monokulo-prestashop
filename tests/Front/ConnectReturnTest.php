@@ -16,7 +16,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 final class ConnectReturnTest extends ShopTestCase {
 	private const ADMIN = 'http://localhost:8093/admin-dev/index.php?controller=AdminModules&configure=monokulo&token=abc';
 
-	private const CREDENTIALS = ['public_key' => 'pk_new', 'secret_token' => 'sk_new', 'endpoint' => 'https://pay.example.com', 'webhook_signing_secret' => 'whsec_new'];
+	private const CREDENTIALS = ['public_key' => 'pk_new', 'secret_token' => 'sk_new', 'api' => '/api/v1', 'webhook_signing_secret' => 'whsec_new'];
 
 	/** @return array{redirect: string}|array{status: int, body: string} */
 	private function comeBack(array $query, int $shopId = 1): array {
@@ -49,7 +49,7 @@ final class ConnectReturnTest extends ShopTestCase {
 		$this->assertSame('prestashop/' . Plugin::VERSION, $request['headers']['monokulo-client']);
 
 		$connection = $this->repository()->connection(self::HOST);
-		$this->assertSame(['https://pay.example.com', 'pk_new', 'sk_new', 'whsec_new'], [$connection->endpoint, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
+		$this->assertSame([self::$monokulo->url . '/api/v1', 'pk_new', 'sk_new', 'whsec_new'], [$connection->api, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
 		$this->assertTrue($this->module()->isConnected());
 	}
 
@@ -137,7 +137,8 @@ final class ConnectReturnTest extends ShopTestCase {
 		return [
 			'no public address yet' => [503, ['error' => 'no public address'], 'unavailable'],
 			'token refused'         => [401, '', 'finish'],
-			'missing secret'        => [200, ['public_key' => 'pk', 'secret_token' => 'sk', 'endpoint' => 'https://x'], 'finish'],
+			'missing secret'        => [200, ['public_key' => 'pk', 'secret_token' => 'sk', 'api' => '/api/v1'], 'finish'],
+			'no API entry'          => [200, ['public_key' => 'pk', 'secret_token' => 'sk', 'webhook_signing_secret' => 'whsec'], 'finish'],
 		];
 	}
 

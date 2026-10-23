@@ -2,6 +2,7 @@
 namespace Monokulo\PrestaShop\Tests\Http;
 
 use Monokulo\PrestaShop\Plugin;
+use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\Browser;
 use Monokulo\PrestaShop\Tests\Support\FakeMonokulo;
 use Monokulo\PrestaShop\Tests\Support\Shop;
@@ -19,7 +20,7 @@ final class CheckoutOverHttpTest extends TestCase {
 	protected function setUp(): void {
 		$this->monokulo = new FakeMonokulo();
 		Shop::exec("DELETE FROM ps_monokulo_connection");
-		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', endpoint = " . Shop::quote($this->monokulo->url) . ", public_key = 'pk_test', secret_token = 'sk_test', webhook_secret = 'whsec', connected_at = 1");
+		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', api = " . Shop::quote($this->monokulo->url . '/api/v1') . ", public_key = 'pk_test', secret_token = 'sk_test', webhook_secret = 'whsec', connected_at = 1");
 	}
 
 	protected function tearDown(): void {
@@ -33,22 +34,24 @@ final class CheckoutOverHttpTest extends TestCase {
 	}
 
 	public function test_over_http_place_order_sends_the_customer_to_monokulo(): void {
-		$this->monokulo->respond('POST', '/pay/pk_test/orders', 200, ['order_id' => 'ord_http']);
+		$this->monokulo->api('order_http');
 		$browser = new Browser();
 
 		$payment = Storefront::toPayment($browser);
 		$this->assertStringContainsString('Pay with Monero', $payment->text());
 		$answer = Storefront::payWithMonero($browser, $payment);
 
-		$checkout = $this->monokulo->url . '/pay/pk_test/orders/ord_http';
+		$checkout = $this->monokulo->url . '/checkout/order_http';
 		$this->assertSame(302, $answer->status);
 		$this->assertSame($checkout, $answer->location());
 		$order = $this->newestOrder();
 		$this->assertSame(Shop::setting('MONOKULO_OS_PENDING'), $order['current_state']);
-		$body = json_decode($this->monokulo->requests()[0]['body'], true);
+		$this->assertSame(['GET /api/v1', 'POST /api/v1/orders'], array_map(static fn(array $r): string => $r['method'] . ' ' . $r['path'], $this->monokulo->requests()));
+		$body = json_decode($this->monokulo->requests()[1]['body'], true);
 		$this->assertSame($order['reference'], $body['merchant_order_id']);
 		$this->assertSame('Order ' . $order['reference'] . ': Mug The best is yet to come', $body['description']);
-		$this->assertSame('prestashop/' . Plugin::VERSION, $this->monokulo->requests()[0]['headers']['monokulo-client']);
+		$this->assertSame('prestashop/' . Plugin::VERSION, $this->monokulo->requests()[1]['headers']['monokulo-client']);
+		$this->assertSame('Bearer sk_test', $this->monokulo->requests()[1]['headers']['authorization']);
 
 		// The payment link, from the confirmation email, goes to the same Monokulo order.
 		$again = (new Browser())->get(Shop::URL . 'module/monokulo/pay?id_cart=' . $order['id_cart'] . '&key=' . $order['secure_key']);
@@ -61,7 +64,7 @@ final class CheckoutOverHttpTest extends TestCase {
 
 	/** Monokulo down: the order is placed, and the customer is told and can try again. */
 	public function test_over_http_a_failed_payment_can_be_tried_again(): void {
-		$this->monokulo->respond('POST', '/pay/pk_test/orders', 503, '{"error":"down"}');
+		$this->monokulo->api('', 503, Api::problem('engine-unavailable', 503, 'Payment engine unavailable', 'down'));
 		$browser = new Browser();
 
 		$answer = Storefront::payWithMonero($browser, Storefront::toPayment($browser));
@@ -70,8 +73,8 @@ final class CheckoutOverHttpTest extends TestCase {
 		$this->assertStringContainsString('The Monero payment could not be started. Please try again, or contact the store.', $answer->text());
 		$this->assertMatchesRegularExpression('/id="monokulo-retry"[^>]*href="([^"]+)"/', $answer->body);
 		preg_match('/id="monokulo-retry"[^>]*href="([^"]+)"/', $answer->body, $m);
-		$this->monokulo->respond('POST', '/pay/pk_test/orders', 200, ['order_id' => 'ord_retry']);
-		$this->assertSame($this->monokulo->url . '/pay/pk_test/orders/ord_retry', $browser->get(html_entity_decode($m[1]))->location());
+		$this->monokulo->api('order_retry');
+		$this->assertSame($this->monokulo->url . '/checkout/order_retry', $browser->get(html_entity_decode($m[1]))->location());
 	}
 
 	public function test_over_http_monero_is_not_offered_before_the_shop_connects(): void {

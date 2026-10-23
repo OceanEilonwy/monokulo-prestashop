@@ -3,6 +3,7 @@ namespace Monokulo\PrestaShop\Tests\Front;
 
 use Monokulo\PrestaShop\Connection;
 use Monokulo\PrestaShop\Plugin;
+use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\FakeMonokulo;
 use Monokulo\PrestaShop\Tests\Support\PrestaShop;
 use Monokulo\PrestaShop\Tests\Support\ShopTestCase;
@@ -20,8 +21,17 @@ final class CheckoutTest extends ShopTestCase {
 		return $this->module()->hookPaymentOptions(['cart' => $cart ?? $this->cart()]);
 	}
 
-	private function monokuloAnswers(int $status, mixed $body): void {
-		self::$monokulo->respond('POST', '/pay/pk_test/orders', $status, $body);
+	/** Monokulo's API makes order `orderId`, or refuses with `status` and `body`. */
+	private function monokuloAnswers(string $orderId, int $status = 201, mixed $body = null): void {
+		self::$monokulo->api($orderId, $status, $body);
+	}
+
+	/** The request that made (or tried to make) the order: the entry's create-order form. */
+	private function orderRequest(): array {
+		$requests = self::$monokulo->requests();
+		$this->assertSame(['GET /api/v1', 'POST /api/v1/orders'], array_map(static fn(array $r): string => $r['method'] . ' ' . $r['path'], array_slice($requests, 0, 2)));
+
+		return $requests[1];
 	}
 
 	/** "Pay with Monero" for `cart`, as the checkout's last step sends it. */
@@ -80,12 +90,12 @@ final class CheckoutTest extends ShopTestCase {
 	 */
 	public function test_paying_places_the_order_and_sends_the_customer_to_monokulo(): void {
 		$this->connect();
-		$this->monokuloAnswers(200, ['order_id' => 'ord_42', 'address' => '8...', 'xmr_amount_piconero' => 1, 'expires_at' => 1]);
+		$this->monokuloAnswers('order_42');
 		$cart = $this->cart([1, self::MUG, 7]);
 
 		$answer = $this->pay($cart);
 
-		$checkout = self::$monokulo->url . '/pay/pk_test/orders/ord_42';
+		$checkout = self::$monokulo->url . '/checkout/order_42';
 		$this->assertSame(['redirect' => $checkout], $answer);
 
 		$order = \Order::getByCartId((int)$cart->id);
@@ -95,8 +105,8 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame($this->module()->orderStatus('pending'), $this->orderStatus((int)$order->id), 'placed, awaiting its Monero payment');
 		$this->assertSame('Awaiting Monero payment', (new \OrderState($this->module()->orderStatus('pending'), 1))->name);
 
-		$request = self::$monokulo->requests()[0];
-		$this->assertSame('/pay/pk_test/orders', $request['path']);
+		$request = $this->orderRequest();
+		$this->assertSame('Bearer sk_test', self::$monokulo->requests()[0]['headers']['authorization'], 'the entry, as the store\'s key sees it');
 		$this->assertSame('Bearer sk_test', $request['headers']['authorization']);
 		$this->assertSame('prestashop/' . Plugin::VERSION, $request['headers']['monokulo-client']);
 		$amount = number_format((float)$order->total_paid, 2, '.', '');
@@ -110,7 +120,7 @@ final class CheckoutTest extends ShopTestCase {
 		], json_decode($request['body'], true));
 
 		$this->assertSame(['Monokulo: the customer was sent to pay this order with Monero here: ' . $checkout], $this->notes((int)$order->id));
-		$this->assertSame([['monokulo_order_id' => 'ord_42', 'id_order' => (string)$order->id, 'id_shop' => '1', 'host' => self::HOST, 'amount' => $amount, 'currency' => 'GBP']], $this->rows('SELECT `monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency` FROM `' . _DB_PREFIX_ . 'monokulo_order`'));
+		$this->assertSame([['monokulo_order_id' => 'order_42', 'id_order' => (string)$order->id, 'id_shop' => '1', 'host' => self::HOST, 'amount' => $amount, 'currency' => 'GBP']], $this->rows('SELECT `monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency` FROM `' . _DB_PREFIX_ . 'monokulo_order`'));
 	}
 
 	/**
@@ -131,19 +141,20 @@ final class CheckoutTest extends ShopTestCase {
 	/** A product name with characters a shop would escape goes to Monokulo as the merchant typed it. */
 	public function test_product_names_are_sent_as_typed(): void {
 		$this->connect();
-		$this->monokuloAnswers(200, ['order_id' => 'ord_1']);
+		$this->monokuloAnswers('order_1');
 		$this->db()->execute('UPDATE `' . _DB_PREFIX_ . "product_lang` SET `name` = 'Tea & \"Biscuits\"' WHERE `id_product` = " . self::MUG);
 		$cart = $this->cart();
 
 		$this->pay($cart);
 
-		$this->assertStringEndsWith(': Tea & "Biscuits"', json_decode(self::$monokulo->requests()[0]['body'], true)['description']);
+		$this->assertStringEndsWith(': Tea & "Biscuits"', json_decode($this->orderRequest()['body'], true)['description']);
 	}
 
 	public static function failures(): array {
 		return [
-			'busy'          => [429, '{"error":"slow down"}', 'Monero payments are busy right now. Please wait a moment and try again.', 'rate limited'],
-			'key rejected'  => [401, '{"error":"unauthorized"}', 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
+			'busy'          => [429, Api::problem('rate-limited', 429, 'Too many requests', 'slow down'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: slow down (rate limited'],
+			'key rejected'  => [401, Api::problem('unauthorized', 401, 'No valid key', 'Send a key.'), 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
+			'not priced'    => [400, Api::problem('invalid-amount', 400, 'The order can\'t be priced', 'unsupported currency: GBP'), 'This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', 'HTTP 400: unsupported currency: GBP (Monokulo cannot price this order'],
 			'anything else' => [500, 'oops', 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: oops'],
 		];
 	}
@@ -154,9 +165,9 @@ final class CheckoutTest extends ShopTestCase {
 	 * stays placed with no Monokulo order.
 	 */
 	#[DataProvider('failures')]
-	public function test_a_refused_payment_leaves_the_order_placed_to_try_again(int $status, string $body, string $customer, string $logged): void {
+	public function test_a_refused_payment_leaves_the_order_placed_to_try_again(int $status, mixed $body, string $customer, string $logged): void {
 		$this->connect();
-		$this->monokuloAnswers($status, $body);
+		$this->monokuloAnswers('', $status, $body);
 		$cart = $this->cart();
 		$before = $this->logSize();
 
@@ -173,7 +184,7 @@ final class CheckoutTest extends ShopTestCase {
 	/** Warnings and errors also go to PrestaShop's own log, for merchants who look there. */
 	public function test_errors_are_also_in_prestashops_log(): void {
 		$this->connect();
-		$this->monokuloAnswers(500, '{"error":"<b>broken</b>"}');
+		$this->monokuloAnswers('', 500, Api::problem('internal', 500, 'Internal error', '<b>broken</b>'));
 
 		$this->pay($this->cart());
 
@@ -183,7 +194,7 @@ final class CheckoutTest extends ShopTestCase {
 	}
 
 	public function test_an_unreachable_monokulo_says_so(): void {
-		$this->repository()->saveConnection(new Connection(self::HOST, 'http://127.0.0.1:' . FakeMonokulo::freePort(), 'pk_test', 'sk_test', 'wh', 1));
+		$this->repository()->saveConnection(new Connection(self::HOST, 'http://127.0.0.1:' . FakeMonokulo::freePort() . '/api/v1', 'pk_test', 'sk_test', 'wh', 1));
 
 		$answer = $this->pay($this->cart());
 
@@ -206,18 +217,19 @@ final class CheckoutTest extends ShopTestCase {
 	 */
 	public function test_the_payment_link_gets_the_same_monokulo_order(): void {
 		$this->connect();
-		$this->monokuloAnswers(500, 'lost');
+		$this->monokuloAnswers('', 500, 'lost');
 		$cart = $this->cart();
 		$this->pay($cart);
 		$order = \Order::getByCartId((int)$cart->id);
 
-		$this->monokuloAnswers(200, ['order_id' => 'ord_1']);
+		$this->monokuloAnswers('order_1');
 		$first = $this->module()->payFromLink((int)$cart->id, $order->secure_key);
 		$second = $this->module()->payFromLink((int)$cart->id, $order->secure_key);
 
-		$this->assertSame(['redirect' => self::$monokulo->url . '/pay/pk_test/orders/ord_1'], $first);
+		$this->assertSame(['redirect' => self::$monokulo->url . '/checkout/order_1'], $first);
 		$this->assertSame($first, $second);
-		$keys = array_map(static fn(array $r): string => json_decode($r['body'], true)['idempotency_key'], self::$monokulo->requests());
+		$posts = array_filter(self::$monokulo->requests(), static fn(array $r): bool => $r['method'] === 'POST');
+		$keys = array_map(static fn(array $r): string => json_decode($r['body'], true)['idempotency_key'], $posts);
 		$this->assertCount(3, $keys);
 		$this->assertCount(1, array_unique($keys));
 		$this->assertCount(1, $this->notes((int)$order->id));
@@ -261,24 +273,26 @@ final class CheckoutTest extends ShopTestCase {
 	/** With "Send errors to Monokulo" on, a failure is also reported to Monokulo; off, it isn't. */
 	public function test_errors_are_forwarded_only_when_turned_on(): void {
 		$this->connect();
-		$this->monokuloAnswers(429, '{"error":"slow down"}');
-		self::$monokulo->respond('POST', '/pay/pk_test/logs', 204, '');
+		$slowDown = Api::problem('rate-limited', 429, 'Too many requests', 'slow down');
+		$this->monokuloAnswers('', 429, $slowDown);
+		self::$monokulo->respond('POST', '/api/v1/logs', 204, '');
 
 		$this->pay($this->cart());
-		$this->assertSame(['/pay/pk_test/orders'], array_column(self::$monokulo->requests(), 'path'));
+		$this->assertSame(['/api/v1', '/api/v1/orders'], array_column(self::$monokulo->requests(), 'path'));
 
 		self::$monokulo->reset();
-		$this->monokuloAnswers(429, '{"error":"slow down"}');
-		self::$monokulo->respond('POST', '/pay/pk_test/logs', 204, '');
+		$this->monokuloAnswers('', 429, $slowDown);
+		self::$monokulo->respond('POST', '/api/v1/logs', 204, '');
 		$this->setting(\Monokulo::FORWARD_ERRORS, '1');
 
 		$this->pay($this->cart());
 		$requests = self::$monokulo->requests();
-		$this->assertSame(['/pay/pk_test/orders', '/pay/pk_test/logs'], array_column($requests, 'path'));
-		$entries = json_decode($requests[1]['body'], true)['entries'];
+		$this->assertSame(['/api/v1', '/api/v1/orders', '/api/v1/logs'], array_column($requests, 'path'));
+		$this->assertSame('Bearer sk_test', $requests[2]['headers']['authorization']);
+		$entries = json_decode($requests[2]['body'], true)['entries'];
 		$this->assertSame('error', $entries[0]['level']);
 		$this->assertStringContainsString('HTTP 429: slow down', $entries[0]['message']);
-		$this->assertSame(substr($requests[0]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
+		$this->assertSame(substr($requests[1]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
 	}
 
 	/** On the order confirmation page and the order in the customer's account: back to the payment while unpaid. */

@@ -41,7 +41,7 @@ final class SettingsOverHttpTest extends TestCase {
 	}
 
 	public function test_over_http_the_page_shows_each_shop_and_its_connection(): void {
-		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', endpoint = 'https://pay.example.com', public_key = 'pk_test', secret_token = 'sk', webhook_secret = 'wh', connected_at = 1760000000");
+		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', api = 'https://pay.example.com/api/v1', public_key = 'pk_test', secret_token = 'sk', webhook_secret = 'wh', connected_at = 1760000000");
 
 		$page = Shop::settingsPage($this->browser);
 
@@ -115,7 +115,7 @@ final class SettingsOverHttpTest extends TestCase {
 		$this->assertMatchesRegularExpression('#\A' . preg_quote(Shop::URL, '#') . '([a-z]{2}/)?module/monokulo/connect\z#', $query['return_url']);
 
 		// Monokulo sends the browser back to return_url with its token.
-		$this->monokulo->respond('POST', '/plugins/connect/prestashop/finish', 200, ['public_key' => 'pk_http', 'secret_token' => 'sk_http', 'endpoint' => $this->monokulo->url, 'webhook_signing_secret' => 'whsec_http']);
+		$this->monokulo->respond('POST', '/plugins/connect/prestashop/finish', 200, ['public_key' => 'pk_http', 'secret_token' => 'sk_http', 'api' => '/api/v1', 'webhook_signing_secret' => 'whsec_http']);
 		$back = $this->browser->get($query['return_url'] . '?token=tok_http&nonce=' . $query['nonce']);
 
 		$this->assertSame(302, $back->status);

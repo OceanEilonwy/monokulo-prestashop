@@ -22,7 +22,7 @@ if (!defined('_PS_VERSION_')) {
 final class Plugin
 {
     /** Kept equal to VERSION and the module's own version by a test. */
-    public const VERSION = '0.1.0';
+    public const VERSION = '0.2.0';
 
     /** The connect path's platform slug: `/plugins/connect/prestashop`. */
     public const SLUG = 'prestashop';

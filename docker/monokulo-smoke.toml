@@ -1,7 +1,7 @@
 # Monokulo for the smoke test (scripts/smoke): a fresh instance on this
 # machine's network, where the shop is http://localhost:8093/.
 #
-# - public_uri: what plugins are given as their endpoint, and where the
+# - public_uri: the address Monokulo calls its own, and where the
 #   connect flow's pages are. Without it Monokulo can't connect plugins.
 # - webhooks.allow_private_urls: the shop's webhook address is on this
 #   machine; Monokulo refuses private addresses unless told otherwise.

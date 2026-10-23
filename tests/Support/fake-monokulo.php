@@ -37,4 +37,7 @@ if (!empty($response['delay'])) {
 
 http_response_code((int)$response['status']);
 header('Content-Type: application/json');
+foreach ($response['headers'] ?? [] as $name => $value) {
+	header($name . ': ' . $value);
+}
 echo is_string($response['body']) ? $response['body'] : json_encode($response['body']);

@@ -18,22 +18,35 @@ if (!defined('_PS_VERSION_')) {
 
 /**
  * Monokulo answered, but not with what was asked for. `status` is its HTTP
- * status (200 when the answer was a success with the wrong shape), `detail`
- * its error message or raw body, for the merchant's log.
+ * status (the success's own when the answer had the wrong shape), `detail`
+ * what went wrong, for the merchant's log. Monokulo's API says why in an
+ * `application/problem+json` body: `problem` is its `type` (the problem's
+ * page in Monokulo's docs, `…/problems/invalid-amount`), or '' when the
+ * answer wasn't one.
  */
 final class ApiError extends \RuntimeException
 {
     public function __construct(
         public readonly int $status,
         public readonly string $detail,
+        public readonly string $problem = '',
     ) {
         parent::__construct(sprintf('HTTP %d: %s', $status, $detail));
+    }
+
+    /** The problem's name, the last part of its `type` (`invalid-amount`), or ''. */
+    public function problemName(): string
+    {
+        $path = (string) parse_url($this->problem, PHP_URL_PATH);
+
+        return basename(rtrim($path, '/'));
     }
 
     /** The language key of what the customer is told. */
     public function customerMessageKey(): string
     {
         return match (true) {
+            $this->problemName() === 'invalid-amount' => 'error_currency',
             $this->status === 429 => 'error_busy',
             $this->status === 401 || $this->status === 403 => 'error_unavailable',
             default => 'error_generic',
@@ -43,11 +56,12 @@ final class ApiError extends \RuntimeException
     /** A pointer for the merchant reading the log, or ''. */
     public function merchantHint(): string
     {
-        return match ($this->status) {
-            401 => ' (the store secret key was rejected: connect the store again from the extension settings)',
-            403 => ' (Monokulo refused the order: check the store\'s domain settings in Monokulo)',
-            404 => ' (Monokulo does not know this store\'s public key: connect the store again)',
-            429 => ' (rate limited: Monokulo is receiving too many orders from this store)',
+        return match (true) {
+            $this->problemName() === 'invalid-amount' => ' (Monokulo cannot price this order: check the store\'s exchange rate settings in Monokulo, or turn Monero off for this currency)',
+            $this->status === 401 => ' (the store secret key was rejected: connect the store again from the module settings)',
+            $this->status === 403 => ' (Monokulo refused the store secret key for this: connect the store again from the module settings)',
+            $this->status === 404 => ' (no Monokulo API at this address: check the Monokulo address in the module settings, and that your Monokulo is up to date)',
+            $this->status === 429 => ' (rate limited: Monokulo is receiving too many orders from this store)',
             default => '',
         };
     }

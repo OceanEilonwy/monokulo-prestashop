@@ -37,10 +37,10 @@ final class FakeMonokulo {
 		throw new \RuntimeException('the fake Monokulo did not start: ' . (string)@file_get_contents($this->dir . '/server.log'));
 	}
 
-	/** Answers `METHOD path` with `status` and `body` (a string, or JSON-encoded). */
-	public function respond(string $method, string $path, int $status, mixed $body, int $delaySeconds = 0): void {
+	/** Answers `METHOD path` with `status` and `body` (a string, or JSON-encoded), and `headers`. */
+	public function respond(string $method, string $path, int $status, mixed $body, int $delaySeconds = 0, array $headers = []): void {
 		$responses = is_file($this->dir . '/responses.json') ? json_decode((string)file_get_contents($this->dir . '/responses.json'), true) : [];
-		$responses[$method . ' ' . $path] = ['status' => $status, 'body' => $body, 'delay' => $delaySeconds];
+		$responses[$method . ' ' . $path] = ['status' => $status, 'body' => $body, 'delay' => $delaySeconds, 'headers' => $headers];
 		file_put_contents($this->dir . '/responses.json', json_encode($responses));
 	}
 
@@ -55,6 +55,19 @@ final class FakeMonokulo {
 		}
 
 		return $out;
+	}
+
+	/**
+	 * Monokulo's API as a shop's secret key finds it: the entry at
+	 * `/api/v1` with its `create-order` form, and that form answering
+	 * `201` with order `orderId` (or `status` and `body`, a problem, when
+	 * given).
+	 */
+	public function api(string $orderId = 'order_1', int $status = 201, mixed $body = null): void {
+		$this->respond('GET', '/api/v1', 200, Api::entry(), headers: ['Content-Type' => 'application/prs.hal-forms+json']);
+		$this->respond('POST', '/api/v1/orders', $status, $body ?? Api::order($orderId), headers: $status === 201
+			? ['Content-Type' => 'application/prs.hal-forms+json', 'Location' => '/api/v1/orders/' . $orderId]
+			: ['Content-Type' => 'application/problem+json']);
 	}
 
 	/** Forgets every answer and request so far. */

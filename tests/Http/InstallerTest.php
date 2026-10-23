@@ -55,7 +55,7 @@ final class InstallerTest extends TestCase {
 
 		$module = Shop::rows("SELECT id_module, active, version FROM ps_module WHERE name = 'monokulo'")[0];
 		$this->assertSame('1', (string)$module['active']);
-		$this->assertSame('0.1.0', $module['version']);
+		$this->assertSame('0.2.0', $module['version']);
 		$hooks = array_column(Shop::rows("SELECT h.name FROM ps_hook_module hm JOIN ps_hook h ON h.id_hook = hm.id_hook WHERE hm.id_module = " . (int)$module['id_module'] . " ORDER BY h.name"), 'name');
 		$this->assertSame(['displayOrderDetail', 'displayPaymentReturn', 'paymentOptions'], $hooks);
 		foreach (self::TABLES as $table) {
