@@ -27,7 +27,6 @@ final class WebhookEvent
         public readonly string $eventId,
         public readonly string $orderId,
         public readonly ?string $txid,
-        public readonly ?string $storeId,
     ) {
     }
 
@@ -44,8 +43,7 @@ final class WebhookEvent
             }
         }
         $text = static fn (string $key): ?string => isset($data[$key]) && is_string($data[$key]) && $data[$key] !== '' ? $data[$key] : null;
-        $store = isset($data['store']) && is_array($data['store']) && isset($data['store']['id']) && is_string($data['store']['id']) ? $data['store']['id'] : null;
 
-        return new self($data['event'], $data['event_id'], $data['order_id'], $text('txid'), $store);
+        return new self($data['event'], $data['event_id'], $data['order_id'], $text('txid'));
     }
 }

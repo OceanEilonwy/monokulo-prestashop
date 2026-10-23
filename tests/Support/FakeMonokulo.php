@@ -58,16 +58,27 @@ final class FakeMonokulo {
 	}
 
 	/**
-	 * Monokulo's API as a shop's secret key finds it: the entry at
-	 * `/api/v1` with its `create-order` form, and that form answering
-	 * `201` with order `orderId` (or `status` and `body`, a problem, when
-	 * given).
+	 * Monokulo's API as a shop's secret key finds it (Api): the entry, kept
+	 * for an hour with an ETag as Monokulo's is, and its `create-order` form
+	 * answering `201` with order `orderId` (or `status` and `body`, a
+	 * problem, when given). `prefix` is the path Monokulo is served under;
+	 * without `onion` it has no onion address.
 	 */
-	public function api(string $orderId = 'order_1', int $status = 201, mixed $body = null): void {
-		$this->respond('GET', '/api/v1', 200, Api::entry(), headers: ['Content-Type' => 'application/prs.hal-forms+json']);
-		$this->respond('POST', '/api/v1/orders', $status, $body ?? Api::order($orderId), headers: $status === 201
-			? ['Content-Type' => 'application/prs.hal-forms+json', 'Location' => '/api/v1/orders/' . $orderId]
+	public function api(string $orderId = 'order_1', int $status = 201, mixed $body = null, string $prefix = '', bool $onion = true): void {
+		$this->entry(Api::entry($onion), $prefix);
+		$this->respond('POST', $prefix . '/api/v1/orders', $status, $body ?? Api::under($prefix, Api::order($orderId, $onion)), headers: $status === 201
+			? ['Content-Type' => 'application/prs.hal-forms+json', 'Location' => $prefix . '/api/v1/orders/' . $orderId]
 			: ['Content-Type' => 'application/problem+json']);
+	}
+
+	/** Answers `GET {prefix}/api/v1` with `entry`, as Monokulo does: kept an hour, with an ETag (`304` to it). */
+	public function entry(array $entry, string $prefix = '', string $etag = '"entry-1"'): void {
+		$this->respond('GET', $prefix . '/api/v1', 200, Api::under($prefix, $entry), headers: [
+			'Content-Type'  => 'application/prs.hal-forms+json',
+			'Cache-Control' => 'private, max-age=3600',
+			'Vary'          => 'Authorization',
+			'ETag'          => $etag,
+		]);
 	}
 
 	/** Forgets every answer and request so far. */

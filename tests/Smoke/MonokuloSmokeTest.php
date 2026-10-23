@@ -1,7 +1,6 @@
 <?php
 namespace Monokulo\PrestaShop\Tests\Smoke;
 
-use Monokulo\PrestaShop\OrderRequest;
 use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\Browser;
 use Monokulo\PrestaShop\Tests\Support\Page;
@@ -23,10 +22,16 @@ use PHPUnit\Framework\TestCase;
  * 4. a guest buys something with Monero: the shop places the order,
  *    makes the Monokulo order with the API entry's `create-order` form and
  *    sends them to the order's checkout, which loads; the order, read back
- *    through the API, is pending.
+ *    through the API, is pending, and the merchant's link to it (its
+ *    `mk:dashboard-order`) opens it on the dashboard;
+ * 5. a second guest's order is one request, from the entry the shop kept,
+ *    and once the kept entry has expired the shop checks it with its ETag.
  *
- * It also checks the stand-in Monokulo's API bodies (Support\Api) against
- * this Monokulo's own description of its API (its `service-desc`).
+ * This Monokulo has an onion address (docker/monokulo-smoke.toml): the
+ * handshake gives the shop its onion entry, and each order its onion
+ * checkout. It also checks that this Monokulo answers as the recordings
+ * the other suites' stand-in answers with (Support\Api) say, and that a key
+ * it doesn't know is refused at the entry.
  *
  * Nothing is paid. Monokulo's pages are filled in by their fields' names.
  */
@@ -60,7 +65,7 @@ final class MonokuloSmokeTest extends TestCase {
 
 		// The order, found from the API's entry with the shop's key, is
 		// waiting for its payment, and its checkout is where the customer went.
-		$connection = Shop::rows("SELECT * FROM ps_monokulo_connection WHERE host = 'localhost:8093'")[0];
+		$connection = $this->connection();
 		$entry = $this->api($connection['api'], $connection['secret_token']);
 		$orders = $this->api(Url::resolve($connection['api'], $entry['_links']['mk:orders']['href']), $connection['secret_token']);
 		$this->assertCount(1, $orders['orders']);
@@ -68,37 +73,81 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertSame('pending', $order['status']);
 		$this->assertSame(0, $order['confirmations']);
 		$this->assertSame($checkout, Url::resolve($connection['api'], $order['_links']['mk:checkout']['href']));
+		$this->assertSame(Api::ONION . '/checkout/' . $order['order_id'], $order['_links']['mk:onion-checkout']['href']);
 		$this->assertSame('GBP', $order['currency']);
 		$this->assertSame(Shop::rows('SELECT reference FROM ps_orders ORDER BY id_order DESC LIMIT 1')[0]['reference'], $order['merchant_order_id']);
 
-		$this->assertTheStandInSpeaksThisMonokulosApi($connection, $entry, $order);
+		// The merchant's link, kept with the order, opens it on their dashboard.
+		$dashboard = Shop::rows('SELECT dashboard FROM ps_monokulo_order ORDER BY seq DESC LIMIT 1')[0]['dashboard'];
+		$this->assertSame(Url::resolve($connection['api'], $order['_links']['mk:dashboard-order']['href']), $dashboard);
+		$merchantPage = $this->browser->get($dashboard);
+		$this->assertSame(200, $merchantPage->status);
+		$this->assertStringContainsString($order['merchant_order_id'], $merchantPage->text());
+
+		$this->assertItAnswersAsTheRecordingsSay($connection, $entry, $order);
+		$this->assertTheKeptEntryMakesAnOrderOneRequest();
+		$this->assertAnUnknownKeyIsRefusedAtTheEntry($connection);
+	}
+
+	/** @return array<string, string> the shop's connection row */
+	private function connection(): array {
+		return Shop::rows("SELECT * FROM ps_monokulo_connection WHERE host = 'localhost:8093'")[0];
 	}
 
 	/**
-	 * The stand-in's bodies have this Monokulo's shape: the entry offers the
-	 * same form, which takes every field the module sends, and an order has
-	 * every field the stand-in's has.
+	 * The stand-in's bodies (recorded in the OpenAPI document at the pinned
+	 * commit) have this Monokulo's shape: the same links and forms in the
+	 * entry, the same fields and links on an order.
 	 */
-	private function assertTheStandInSpeaksThisMonokulosApi(array $connection, array $entry, array $order): void {
-		$names = static fn(array $form): array => array_column($form['properties'], 'name');
-		$form = $entry['_templates']['create-order'];
-		$standIn = Api::entry()['_templates']['create-order'];
-		$this->assertSame([$standIn['method'], $standIn['target'], $standIn['contentType']], [$form['method'], $form['target'], $form['contentType']]);
-		$this->assertEqualsCanonicalizing($names($standIn), $names($form));
-		$sent = OrderRequest::body(1, 1, 'XKBKNABJK', 12.5, 'EUR', 2, ['Mug'], 'Order XKBKNABJK', ' + %d more');
-		$this->assertSame([], array_diff(array_keys($sent), $names($form)), 'every field the module sends is one the form takes');
-
-		$this->assertSame('/api/v1', $entry['_links']['self']['href']);
-		$description = $this->api(Url::resolve($connection['api'], $entry['_links']['service-desc']['href']), null);
-		$schema = $description['components']['schemas'];
-		$this->assertEqualsCanonicalizing(array_keys(Api::order('order_x')), array_keys($order), 'the stand-in order has the real one\'s fields');
-		$this->assertSame([], array_diff($schema['Order']['required'], array_keys(Api::order('order_x'))));
-		$this->assertSame([], array_diff(array_keys($sent), array_keys($schema['OrdersInput']['properties'])));
-		$this->assertSame([], array_diff($schema['OrdersInput']['required'] ?? [], array_keys($sent)));
-		$this->assertMatchesRegularExpression('/' . $schema['Amount']['pattern'] . '/', $sent['amount']);
-		foreach (array_keys(Api::order('order_x')['_links']) as $rel) {
-			$this->assertArrayHasKey($rel, $order['_links'], $rel);
+	private function assertItAnswersAsTheRecordingsSay(array $connection, array $entry, array $order): void {
+		$recorded = Api::entry();
+		$this->assertEqualsCanonicalizing(array_keys($recorded['_links']), array_keys($entry['_links']));
+		$this->assertEqualsCanonicalizing(array_keys($recorded['_templates']), array_keys($entry['_templates']));
+		foreach ($recorded['_templates'] as $name => $form) {
+			$this->assertSame([$form['method'], $form['target'], $form['contentType']], [$entry['_templates'][$name]['method'], $entry['_templates'][$name]['target'], $entry['_templates'][$name]['contentType']], $name);
+			$this->assertEqualsCanonicalizing(array_column($form['properties'], 'name'), array_column($entry['_templates'][$name]['properties'], 'name'), $name);
 		}
+		$this->assertSame(Api::ONION . '/api/v1', $entry['_links']['mk:onion-api']['href']);
+
+		// The order as made, the read one's fields and links are the same.
+		$made = Api::order($order['order_id']);
+		$this->assertEqualsCanonicalizing(array_keys($made), array_keys($order));
+		$this->assertEqualsCanonicalizing(array_keys($made['_links']), array_keys($order['_links']));
+
+		$description = $this->api(Url::resolve($connection['api'], $entry['_links']['service-desc']['href']), null);
+		$this->assertEqualsCanonicalizing(array_keys(Api::document()['paths']), array_keys($description['paths']), 'the same routes as the pinned document');
+	}
+
+	/**
+	 * The shop kept the entry it read for its key: the next order is made
+	 * with no request for it. Once it has expired, the shop asks with its
+	 * ETag, and Monokulo's `304` keeps it another hour.
+	 */
+	private function assertTheKeptEntryMakesAnOrderOneRequest(): void {
+		$kept = $this->connection();
+		$this->assertNotSame('', $kept['entry_etag']);
+		$this->assertEqualsWithDelta(time() + 3600, (int)$kept['entry_expires_at'], 120);
+		$this->assertSame(Api::entry()['_templates']['create-order']['target'], json_decode($kept['entry'], true)['_templates']['create-order']['target']);
+
+		$this->buyWithMonero();
+		$this->assertSame($kept['entry_expires_at'], $this->connection()['entry_expires_at'], 'not read again');
+
+		Shop::exec("UPDATE ps_monokulo_connection SET entry_expires_at = 0 WHERE host = 'localhost:8093'");
+		$this->buyWithMonero();
+		$again = $this->connection();
+		$this->assertSame($kept['entry_etag'], $again['entry_etag']);
+		$this->assertSame($kept['entry'], $again['entry']);
+		$this->assertEqualsWithDelta(time() + 3600, (int)$again['entry_expires_at'], 120);
+	}
+
+	/** A key this Monokulo doesn't know is refused at the entry, as a problem. */
+	private function assertAnUnknownKeyIsRefusedAtTheEntry(array $connection): void {
+		$curl = curl_init($connection['api']);
+		curl_setopt_array($curl, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => ['Authorization: Bearer sk_' . str_repeat('0', 64)]]);
+		$body = (string)curl_exec($curl);
+		$this->assertSame(401, curl_getinfo($curl, CURLINFO_RESPONSE_CODE), $body);
+		$this->assertStringStartsWith('application/problem+json', (string)curl_getinfo($curl, CURLINFO_CONTENT_TYPE));
+		$this->assertSame(Api::recordedProblem('get', '/api/v1', 'unauthorized')['type'], json_decode($body, true)['type']);
 	}
 
 	/** GET `url` from Monokulo's API, with `key` when given. */
@@ -167,8 +216,10 @@ final class MonokuloSmokeTest extends TestCase {
 
 		$page = $admin->follow($admin->get((string)$return->location()));
 		$this->assertStringContainsString('Your store is connected', $page->text());
-		$connection = Shop::rows("SELECT * FROM ps_monokulo_connection WHERE host = 'localhost:8093'")[0];
+		$connection = $this->connection();
 		$this->assertSame($this->monokulo . '/api/v1', $connection['api']);
+		$this->assertSame(Api::ONION . '/api/v1', $connection['onion_api']);
+		$this->assertStringContainsString('Customers on the shop\'s .onion address pay on Monokulo\'s: ' . Api::ONION, $page->text());
 		$this->assertStringStartsWith('sk_', $connection['secret_token']);
 		$this->assertStringStartsWith('pk_', $connection['public_key']);
 		$this->assertNotSame('', $connection['webhook_secret']);

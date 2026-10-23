@@ -43,17 +43,38 @@ With multistore, each shop connects on its own: a Monokulo store is one
 web address. Shops that share an address share one connection. **Connect
 again** replaces a shop's keys (Monokulo replaces its webhook too).
 
+A Monokulo served under a path (`https://example.com/monokulo`) works the
+same: save that address, path included.
+
 Connecting gives the shop the store's secret key and the entry of
 Monokulo's [HTTP API](https://docs.monokulo.com/api/) (`/api/v1` on your
-Monokulo's address). From there the module follows the API's links and
-forms: it makes each order with the entry's `create-order` form and sends
-the customer to the order's checkout link (`/checkout/<order id>`).
+Monokulo's address, under its path if it has one). From there the module
+follows the API's links and forms and builds no address itself: it makes
+each order with the entry's `create-order` form, sends the customer to the
+order's checkout link (`mk:checkout`), and keeps the order's page on your
+Monokulo dashboard (`mk:dashboard-order`) for its notes. It keeps the entry
+for as long as Monokulo says (an hour), so making an order is usually one
+request, and reads it again when Monokulo refuses something from it.
 Monokulo's refusals are `application/problem+json`: the customer gets a
 plain message, and the module's log gets Monokulo's reason.
 
-Upgrading from 0.1.0 keeps your connections: the module takes the API's
-entry to be `/api/v1` on the saved Monokulo address, so there's no need to
-connect again.
+### Tor
+
+When your Monokulo has an onion address, connecting gives the shop its
+API entry there too (the Stores panel shows it), and every order its
+checkout on it (`mk:onion-checkout`). A customer browsing the shop's own
+`.onion` address is sent to that onion checkout, never to Monokulo's web
+address. If your Monokulo has no onion address, such a customer is told
+Monero can't be paid over Tor here, and the module's log says why. The
+shop's server itself always talks to Monokulo at the saved address.
+
+### Upgrading from 0.2.0
+
+Connected shops keep working: there's no need to connect again. The
+Stores panel shows your Monokulo's onion address only once a shop has
+connected again (Tor customers are sent to the onion checkout either way,
+from each order's own link), and orders made before the upgrade get their
+*In Monokulo* link once the customer goes back to pay them.
 
 Which countries, currencies and customer groups see Monero is up to
 PrestaShop's own **Payment > Preferences**, as for any payment module.
@@ -88,7 +109,7 @@ Each status is configurable under **Order statuses**; the defaults:
 | (order placed) | The customer was sent to pay | **Order placed**: Awaiting Monero payment | The payment link |
 | `order.unconfirmed`, `order.confirming` | A payment was seen; waiting for confirmations | **Payment seen**: Awaiting Monero payment | Note |
 | `order.partial` | Less than the amount due arrived (underpaid) | **Part paid**: Awaiting Monero payment | Note |
-| `order.paid` | Paid in full | **Paid**: Payment accepted (its email tells the customer) | Note with a link to the order in Monokulo |
+| `order.paid` | Paid in full | **Paid**: Payment accepted (its email tells the customer) | Note |
 | `order.overpaid` | Paid with more than was due | **Paid**: Payment accepted | As paid, and that the excess isn't refunded automatically |
 | `order.expired` | The payment window closed without full payment | **Expired**: Canceled | Note: any funds received stay at the address |
 | `order.double_spend_detected` | A payment was double-spent and no longer counts | unchanged | Fraud alert (the status change, if any, comes as its own event) |
@@ -96,7 +117,8 @@ Each status is configurable under **Order statuses**; the defaults:
 
 *Awaiting Monero payment* is the module's own status, made when it is
 installed. The notes are private messages on the order, which only you see
-on the order's page in the back office.
+on the order's page in the back office; each links the order in your
+Monokulo dashboard (*In Monokulo*).
 
 A paid order stays paid: if Monokulo later reports it expired or part paid
 (after a double spend, say), the order keeps its status, and a note says
@@ -130,7 +152,8 @@ answers every request with 503, and Monokulo retries until it's back.
 The module writes to `var/logs/monokulo.log`, each line with the request's
 trace id, which matches Monokulo's own logs; its warnings and errors also
 go to **Advanced Parameters > Logs**. **Send errors to Monokulo** also
-sends them to your Monokulo, when the store there accepts client logs.
+sends them to your Monokulo (the API entry's `send-logs` form), when the
+store there accepts client logs.
 
 ## Uninstall
 
@@ -144,6 +167,7 @@ Everything runs in Docker on the host's network (Linux): the official
 PrestaShop image at `http://localhost:8093/` with MariaDB.
 
 ```sh
+scripts/openapi          # Monokulo's OpenAPI document at the pinned commit (needs Rust; once per pin)
 scripts/test up          # build and start PrestaShop (PS_VERSION=9.2.0|8.2.8, PHP_VERSION=8.1…8.5; default 9.2.0 on 8.5)
 scripts/test all         # build the zip, upload it through the module manager, run every suite
 scripts/test front       # one suite: unit, front, admin or http (extra args go to PHPUnit)
@@ -158,23 +182,32 @@ password `admin-password-1`.
 
 - **unit**: the module's library (`src/lib`), which knows nothing of
   PrestaShop (except `src/lib/Shop`, its glue to it), against a stand-in
-  Monokulo.
+  Monokulo, and what it sends against Monokulo's OpenAPI document.
 - **front**, **admin**: the installed PrestaShop booted in the test
   process, the way its front office and back office boot, each test in a
   rolled-back database transaction.
 - **http**: real HTTP through Apache: the module upload, the settings page
   and the connect flow's redirects, a guest's checkout, webhooks.
-- **smoke**: a fresh Monokulo (`docker/monokulo-smoke.toml`): sign up, add
-  a watch-only wallet, connect, then a guest checkout lands on the Monokulo
-  checkout, whose status is pending. Nothing is paid.
+- **smoke**: a fresh Monokulo with an onion address
+  (`docker/monokulo-smoke.toml`): sign up, add a watch-only wallet,
+  connect, then a guest checkout lands on the Monokulo checkout, whose
+  status is pending, and the merchant's link opens the order on the
+  dashboard; the next orders use the kept API entry. Nothing is paid.
 
 The test shop leaves out PrestaShop's marketing and cloud modules
 (`docker/ps-setup`), which call home and take no part in a payment.
 
-Webhook tests use Monokulo's published test vectors, vendored in
-`tests/vectors` and pinned to a monokulo commit (`tests/vectors/PIN`).
-`scripts/vectors check` compares them with the pinned commit;
-`scripts/vectors pin <commit>` moves the pin.
+The tests are pinned to a monokulo commit (`tests/vectors/PIN`):
+
+- The stand-in Monokulo answers with the exchanges recorded in Monokulo's
+  OpenAPI document at that commit: the entry and orders as the store's
+  secret key sees them, the connect handshake, its problems.
+  `scripts/openapi` generates it from Monokulo's source into
+  `tests/openapi.json` (not committed; CI caches it per commit).
+- Webhook tests use Monokulo's published test vectors, vendored in
+  `tests/vectors`. `scripts/vectors check` compares them with the pinned
+  commit; `scripts/vectors pin <commit>` moves the pin (then run
+  `scripts/openapi` again).
 
 ## Release
 

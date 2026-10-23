@@ -1,17 +1,20 @@
 <?php
 namespace Monokulo\PrestaShop\Tests\Http;
 
+use Monokulo\PrestaShop\Connection;
 use Monokulo\PrestaShop\Database;
+use Monokulo\PrestaShop\Entry;
 use Monokulo\PrestaShop\Repository;
 use Monokulo\PrestaShop\Tests\Support\Shop;
 use PHPUnit\Framework\TestCase;
 
 /**
- * A shop connected with 0.1.0, before Monokulo's HTTP API, kept the address
- * Monokulo gave it (`endpoint`) and no API entry. Upgrading
- * (upgrade/upgrade-0.2.0.php) or installing again over the kept tables
- * gives each connection its entry, `/api/v1` on the saved Monokulo address,
- * so the shop keeps taking Monero without connecting again.
+ * A shop on 0.2.0, the first version on Monokulo's HTTP API, upgrades
+ * (upgrade/upgrade-0.3.0.php, or installing again over the kept tables)
+ * without connecting again: its connections and orders are kept, and get
+ * the columns 0.3.0 added. Its connection has no onion address until it
+ * connects again; an order made before has no dashboard link until the
+ * customer goes back to pay it.
  *
  * Against the shop's real database, in tables of their own (the schema
  * change can't run inside a rolled-back transaction).
@@ -53,10 +56,10 @@ final class UpgradeTest extends TestCase {
 
 	protected function setUp(): void {
 		$this->dropTables();
-		// 0.1.0's table, with two shops connected.
+		// 0.2.0's tables, with a shop connected and an order.
 		Shop::exec("CREATE TABLE `mkupgrade_monokulo_connection` (
 			`host` VARCHAR(255) NOT NULL,
-			`endpoint` VARCHAR(255) NOT NULL,
+			`api` VARCHAR(255) NOT NULL,
 			`public_key` VARCHAR(128) NOT NULL,
 			`secret_token` VARCHAR(255) NOT NULL,
 			`webhook_secret` VARCHAR(255) NOT NULL,
@@ -64,9 +67,7 @@ final class UpgradeTest extends TestCase {
 			PRIMARY KEY (`host`)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 		Shop::exec("INSERT INTO `mkupgrade_monokulo_connection` VALUES
-			('shop.example', 'https://pay.example.com/', 'pk_a', 'sk_a', 'whsec_a', 1760000000),
-			('other.example', 'https://pay.example.com', 'pk_b', 'sk_b', 'whsec_b', 1760000001)");
-		// And its orders, without when each was paid.
+			('shop.example', 'https://example.com/monokulo/api/v1', 'pk_a', 'sk_a', 'whsec_a', 1760000000)");
 		Shop::exec("CREATE TABLE `mkupgrade_monokulo_order` (
 			`seq` INT(11) NOT NULL AUTO_INCREMENT,
 			`monokulo_order_id` VARCHAR(64) NOT NULL,
@@ -76,12 +77,13 @@ final class UpgradeTest extends TestCase {
 			`amount` VARCHAR(40) NOT NULL,
 			`currency` VARCHAR(8) NOT NULL,
 			`created_at` INT(11) NOT NULL,
+			`paid_at` INT(11) NULL DEFAULT NULL,
 			PRIMARY KEY (`monokulo_order_id`),
 			UNIQUE KEY `seq` (`seq`),
 			KEY `id_order` (`id_order`)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 		Shop::exec("INSERT INTO `mkupgrade_monokulo_order` (`monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency`, `created_at`) VALUES
-			('order_old', 7, 1, 'shop.example', '12.50', 'EUR', 1760000000)");
+			('order_old', 7, 1, 'shop.example', '12.5', 'EUR', 1760000000)");
 	}
 
 	protected function tearDown(): void {
@@ -95,44 +97,53 @@ final class UpgradeTest extends TestCase {
 	}
 
 	/** @return list<string> */
-	private function columns(): array {
-		return array_column(Shop::rows('SHOW COLUMNS FROM `mkupgrade_monokulo_connection`'), 'Field');
+	private function columns(string $table): array {
+		return array_column(Shop::rows('SHOW COLUMNS FROM `mkupgrade_monokulo_' . $table . '`'), 'Field');
 	}
 
-	public function test_over_http_an_upgraded_connection_finds_the_api_on_the_saved_address(): void {
+	public function test_over_http_an_upgraded_connection_keeps_working(): void {
 		$repository = new Repository($this->database());
 
-		$repository->install('https://www.monokulo.com/');
+		$repository->install();
 
-		$this->assertSame(['host', 'api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at'], $this->columns(), 'the old endpoint is gone');
+		$this->assertSame(['host', 'api', 'onion_api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at', 'entry', 'entry_etag', 'entry_expires_at'], $this->columns('connection'));
 		$connection = $repository->connection('shop.example');
-		$this->assertSame(['https://www.monokulo.com/api/v1', 'pk_a', 'sk_a', 'whsec_a', 1760000000], [$connection->api, $connection->publicKey, $connection->secretToken, $connection->webhookSecret, $connection->connectedAt]);
-		$this->assertSame('https://www.monokulo.com/api/v1', $repository->connection('other.example')->api);
+		$this->assertSame(['https://example.com/monokulo/api/v1', '', 'pk_a', 'sk_a', 'whsec_a', 1760000000, null], [$connection->api, $connection->onionApi, $connection->publicKey, $connection->secretToken, $connection->webhookSecret, $connection->connectedAt, $connection->entry]);
 
 		// Again (the next install, or a second upgrade run) changes nothing.
-		$repository->install('https://elsewhere.example');
-		$this->assertSame('https://www.monokulo.com/api/v1', $repository->connection('shop.example')->api);
-		$this->assertSame(['host', 'api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at'], $this->columns());
+		$repository->install();
+		$this->assertEquals($connection, $repository->connection('shop.example'));
 	}
 
-	/** Its Monokulo orders are still found, and now note when each is paid. */
-	public function test_over_http_upgraded_orders_note_their_payment(): void {
+	/** Its Monokulo orders are still found; one paid again from the shop gets its dashboard link. */
+	public function test_over_http_upgraded_orders_are_still_found(): void {
 		$repository = new Repository($this->database());
 
-		$repository->install('https://www.monokulo.com');
+		$repository->install();
 
-		$this->assertSame(['order_id' => 7, 'shop_id' => 1, 'host' => 'shop.example', 'latest' => true, 'paid_elsewhere' => false], $repository->findOrder('order_old'));
+		$this->assertContains('dashboard', $this->columns('order'));
+		$this->assertSame(['order_id' => 7, 'shop_id' => 1, 'host' => 'shop.example', 'dashboard' => '', 'latest' => true, 'paid_elsewhere' => false], $repository->findOrder('order_old'));
+		$this->assertFalse($repository->recordOrder('order_old', 7, 1, 'shop.example', '12.5', 'EUR', 'https://example.com/monokulo/stores/s/orders/order_old', 1760000050));
+		$this->assertSame('https://example.com/monokulo/stores/s/orders/order_old', $repository->findOrder('order_old')['dashboard']);
 		$repository->markPaid('order_old', 1760000100);
 		$this->assertSame('1760000100', Shop::rows("SELECT `paid_at` FROM `mkupgrade_monokulo_order` WHERE `monokulo_order_id` = 'order_old'")[0]['paid_at']);
 	}
 
-	/** Uninstalling forgot the address but kept the tables: the old endpoint stands in for it. */
-	public function test_over_http_reinstalling_without_an_address_uses_the_old_endpoint(): void {
+	/** The API entry is kept for the key it was read with: connecting again (a new key) forgets it. */
+	public function test_over_http_the_entry_is_kept_per_key(): void {
 		$repository = new Repository($this->database());
+		$repository->install();
+		$connection = $repository->connection('shop.example');
 
-		$repository->install('');
+		$repository->keepEntry($connection, new Entry(['_links' => ['self' => ['href' => '/monokulo/api/v1']]], '"v1"', 1760003600));
 
-		$this->assertSame('https://pay.example.com/api/v1', $repository->connection('shop.example')->api);
-		$this->assertSame('https://pay.example.com/api/v1', $repository->connection('other.example')->api);
+		$kept = $repository->connection('shop.example')->entry;
+		$this->assertEquals(new Entry(['_links' => ['self' => ['href' => '/monokulo/api/v1']]], '"v1"', 1760003600), $kept);
+
+		$replaced = new Connection('shop.example', $connection->api, 'http://abc.onion/api/v1', 'pk_b', 'sk_b', 'whsec_b', 1760000200);
+		$repository->saveConnection($replaced);
+		$repository->keepEntry($connection, new Entry([], '"stale"', 1760009999));
+		$this->assertNull($repository->connection('shop.example')->entry, 'an entry read with the old key is not kept for the new one');
+		$this->assertSame('http://abc.onion/api/v1', $repository->connection('shop.example')->onionApi);
 	}
 }

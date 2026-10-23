@@ -2,6 +2,8 @@
 # Docker on the runner's own network (docker/compose.yaml), so it is Linux
 # only.
 #
+# - openapi: Monokulo's OpenAPI document at the pinned commit, which the
+#   tests' stand-in Monokulo answers from (openapi.yml).
 # - test: the official PrestaShop image, 9.2.0 on PHP 8.2 and 8.5 and 8.2.8
 #   on PHP 8.1: the zip through the back office's module upload, then the
 #   unit, front, admin and http suites. Webhooks are tested against
@@ -35,8 +37,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  openapi:
+    uses: ./.github/workflows/openapi.yml
+    secrets:
+      MONOKULO_READ_TOKEN: ${{ secrets.MONOKULO_READ_TOKEN }}
+
   test:
     name: PrestaShop ${{ matrix.prestashop }}, PHP ${{ matrix.php }}
+    needs: openapi
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -56,6 +64,10 @@ jobs:
       COVERAGE: ${{ matrix.main && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: openapi
+          path: tests
       - name: Start PrestaShop
         run: scripts/test up
       - name: PrestaShop's coding standard
@@ -107,10 +119,15 @@ jobs:
   smoke:
     name: Smoke test against Monokulo
     if: github.event_name != 'pull_request'
+    needs: openapi
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: openapi
+          path: tests
       - name: Build Monokulo at the pinned commit
         if: inputs.monokulo_image == ''
         env:

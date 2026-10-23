@@ -19,9 +19,11 @@ if (!defined('_PS_VERSION_')) {
 /**
  * The module's own tables.
  *
- * - `monokulo_connection`: one row per shop host that has connected.
+ * - `monokulo_connection`: one row per shop host that has connected, with
+ *   the API entry as last read for its key.
  * - `monokulo_order`: every Monokulo order the shop created, which
- *   PrestaShop order it pays, and when it was paid. A PrestaShop order can
+ *   PrestaShop order it pays, its page on the merchant's dashboard, and
+ *   when it was paid. A PrestaShop order can
  *   have more than one when its total changed after a first attempt; the
  *   newest is the current one, and Monokulo keeps watching the others, so
  *   their webhooks are still recognised.
@@ -33,7 +35,7 @@ if (!defined('_PS_VERSION_')) {
  * Uninstalling the module keeps these tables: orders refer to them, and
  * installing again picks the connections back up.
  */
-final class Repository
+final class Repository implements EntryStore
 {
     public const NONCE_TTL_SECONDS = 600;
 
@@ -51,10 +53,14 @@ final class Repository
             "CREATE TABLE IF NOT EXISTS `{$p}monokulo_connection` (
                 `host` VARCHAR(255) NOT NULL,
                 `api` VARCHAR(255) NOT NULL,
+                `onion_api` VARCHAR(255) NOT NULL DEFAULT '',
                 `public_key` VARCHAR(128) NOT NULL,
                 `secret_token` VARCHAR(255) NOT NULL,
                 `webhook_secret` VARCHAR(255) NOT NULL,
                 `connected_at` INT(11) NOT NULL,
+                `entry` MEDIUMTEXT NULL,
+                `entry_etag` VARCHAR(255) NOT NULL DEFAULT '',
+                `entry_expires_at` INT(11) NOT NULL DEFAULT 0,
                 PRIMARY KEY (`host`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
             "CREATE TABLE IF NOT EXISTS `{$p}monokulo_order` (
@@ -65,6 +71,7 @@ final class Repository
                 `host` VARCHAR(255) NOT NULL,
                 `amount` VARCHAR(40) NOT NULL,
                 `currency` VARCHAR(8) NOT NULL,
+                `dashboard` VARCHAR(512) NOT NULL DEFAULT '',
                 `created_at` INT(11) NOT NULL,
                 `paid_at` INT(11) NULL DEFAULT NULL,
                 PRIMARY KEY (`monokulo_order_id`),
@@ -89,40 +96,37 @@ final class Repository
     }
 
     /**
-     * Creates the tables, and brings ones an earlier version made up to
-     * date. `address` is the merchant's saved Monokulo address.
+     * Columns added since 0.2.0, the first version on Monokulo's HTTP API,
+     * by table: a shop that upgrades keeps its connections and orders. A
+     * connection made before 0.3.0 has no `onion_api` until it connects
+     * again, and an order made before it no dashboard link until the
+     * customer goes back to pay it.
      */
-    public function install(string $address): void
+    private const ADDED = [
+        'connection' => [
+            'onion_api' => "VARCHAR(255) NOT NULL DEFAULT '' AFTER `api`",
+            'entry' => 'MEDIUMTEXT NULL',
+            'entry_etag' => "VARCHAR(255) NOT NULL DEFAULT ''",
+            'entry_expires_at' => 'INT(11) NOT NULL DEFAULT 0',
+        ],
+        'order' => [
+            'dashboard' => "VARCHAR(512) NOT NULL DEFAULT '' AFTER `currency`",
+        ],
+    ];
+
+    /** Creates the tables, and adds what's new to ones an earlier version made. */
+    public function install(): void
     {
         foreach ($this->schema() as $statement) {
             $this->db->execute($statement);
         }
-        $this->upgradeConnections($address);
-        // 0.1.0 didn't note when a Monokulo order was paid.
-        if (!$this->hasColumn($this->table('order'), 'paid_at')) {
-            $this->db->execute('ALTER TABLE `' . $this->table('order') . '` ADD COLUMN `paid_at` INT(11) NULL DEFAULT NULL AFTER `created_at`');
+        foreach (self::ADDED as $table => $columns) {
+            foreach ($columns as $column => $definition) {
+                if (!$this->hasColumn($this->table($table), $column)) {
+                    $this->db->execute('ALTER TABLE `' . $this->table($table) . '` ADD COLUMN `' . $column . '` ' . $definition);
+                }
+            }
         }
-    }
-
-    /**
-     * Connections made before Monokulo's HTTP API (module 0.1.0) kept the
-     * address Monokulo gave them (`endpoint`) and no API entry. Their entry
-     * is `/api/v1` on the saved Monokulo address, so they keep working
-     * without connecting again. Uninstalling forgets the address but keeps
-     * the tables: then the old `endpoint` stands in for it.
-     */
-    private function upgradeConnections(string $address): void
-    {
-        $table = $this->table('connection');
-        if (!$this->hasColumn($table, 'endpoint')) {
-            return;
-        }
-        if (!$this->hasColumn($table, 'api')) {
-            $this->db->execute('ALTER TABLE `' . $table . '` ADD COLUMN `api` VARCHAR(255) NOT NULL DEFAULT \'\' AFTER `host`');
-        }
-        $base = $address !== '' ? $this->db->quote(rtrim($address, '/')) : "TRIM(TRAILING '/' FROM `endpoint`)";
-        $this->db->execute('UPDATE `' . $table . '` SET `api` = CONCAT(' . $base . ", '/api/v1') WHERE `api` = ''");
-        $this->db->execute('ALTER TABLE `' . $table . '` DROP COLUMN `endpoint`, ALTER COLUMN `api` DROP DEFAULT');
     }
 
     public function connection(string $host): ?Connection
@@ -135,20 +139,33 @@ final class Repository
         return new Connection(
             $row['host'],
             $row['api'],
+            $row['onion_api'],
             $row['public_key'],
             $row['secret_token'],
             $row['webhook_secret'],
             (int) $row['connected_at'],
+            is_string($row['entry']) ? Entry::fromJson($row['entry'], $row['entry_etag'], (int) $row['entry_expires_at']) : null,
         );
     }
 
+    /** Saves a new connection, replacing the host's old one (and its kept entry, which was for the old key). */
     public function saveConnection(Connection $c): void
     {
         $q = fn (string $v): string => $this->db->quote($v);
         $this->db->execute(
-            'REPLACE INTO `' . $this->table('connection') . '` (`host`, `api`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ('
-            . implode(', ', [$q($c->host), $q($c->api), $q($c->publicKey), $q($c->secretToken), $q($c->webhookSecret), (int) $c->connectedAt])
+            'REPLACE INTO `' . $this->table('connection') . '` (`host`, `api`, `onion_api`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ('
+            . implode(', ', [$q($c->host), $q($c->api), $q($c->onionApi), $q($c->publicKey), $q($c->secretToken), $q($c->webhookSecret), (int) $c->connectedAt])
             . ')'
+        );
+    }
+
+    /** Keeps the API entry as just read for the connection's key (not for a key that replaced it meanwhile). */
+    public function keepEntry(Connection $c, Entry $entry): void
+    {
+        $this->db->execute(
+            'UPDATE `' . $this->table('connection') . '` SET `entry` = ' . $this->db->quote($entry->json())
+            . ', `entry_etag` = ' . $this->db->quote($entry->etag) . ', `entry_expires_at` = ' . $entry->expiresAt
+            . ' WHERE `host` = ' . $this->db->quote($c->host) . ' AND `secret_token` = ' . $this->db->quote($c->secretToken)
         );
     }
 
@@ -187,27 +204,36 @@ final class Repository
     }
 
     /**
-     * Remembers that `monokuloOrderId` pays PrestaShop order `orderId`. True
-     * the first time, false when it was already known (a retried request got
-     * the same Monokulo order back).
+     * Remembers that `monokuloOrderId` pays PrestaShop order `orderId`, and
+     * its page on the merchant's dashboard (`dashboard`, '' when Monokulo
+     * gave none). True the first time, false when it was already known (a
+     * retried request got the same Monokulo order back).
      */
-    public function recordOrder(string $monokuloOrderId, int $orderId, int $shopId, string $host, string $amount, string $currency, int $now): bool
+    public function recordOrder(string $monokuloOrderId, int $orderId, int $shopId, string $host, string $amount, string $currency, string $dashboard, int $now): bool
     {
         $this->db->execute(
-            'INSERT IGNORE INTO `' . $this->table('order') . '` (`monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency`, `created_at`) VALUES ('
+            'INSERT IGNORE INTO `' . $this->table('order') . '` (`monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency`, `dashboard`, `created_at`) VALUES ('
             . $this->db->quote($monokuloOrderId) . ', ' . $orderId . ', ' . $shopId . ', ' . $this->db->quote($host) . ', '
-            . $this->db->quote($amount) . ', ' . $this->db->quote($currency) . ', ' . $now . ')'
+            . $this->db->quote($amount) . ', ' . $this->db->quote($currency) . ', ' . $this->db->quote($dashboard) . ', ' . $now . ')'
+        );
+        if ($this->db->affected() === 1) {
+            return true;
+        }
+        // Made before 0.3.0, which didn't keep the link.
+        $this->db->execute(
+            'UPDATE `' . $this->table('order') . '` SET `dashboard` = ' . $this->db->quote($dashboard)
+            . ' WHERE `monokulo_order_id` = ' . $this->db->quote($monokuloOrderId) . " AND `dashboard` = ''"
         );
 
-        return $this->db->affected() === 1;
+        return false;
     }
 
     /**
      * The PrestaShop order a Monokulo order pays, whether it is that order's
      * newest (current) Monokulo order, and whether another of its Monokulo
-     * orders was paid already.
+     * orders was paid already, and its page on the merchant's dashboard ('' when unknown).
      *
-     * @return array{order_id: int, shop_id: int, host: string, latest: bool, paid_elsewhere: bool}|null
+     * @return array{order_id: int, shop_id: int, host: string, dashboard: string, latest: bool, paid_elsewhere: bool}|null
      */
     public function findOrder(string $monokuloOrderId): ?array
     {
@@ -224,6 +250,7 @@ final class Repository
             'order_id' => (int) $row['id_order'],
             'shop_id' => (int) $row['id_shop'],
             'host' => $row['host'],
+            'dashboard' => $row['dashboard'],
             'latest' => $newest && $newest['monokulo_order_id'] === $row['monokulo_order_id'],
             'paid_elsewhere' => (bool) $this->db->row(
                 'SELECT `monokulo_order_id` FROM `' . $this->table('order') . '` WHERE `id_order` = ' . (int) $row['id_order']

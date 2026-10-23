@@ -1,0 +1,43 @@
+#!/bin/sh
+# Monokulo's OpenAPI document, with the exchanges it records against a test
+# engine as examples, at the monokulo commit pinned in tests/vectors/PIN:
+# tests/openapi.json, which the tests' stand-in Monokulo answers from. It is
+# generated from Monokulo's source, never committed (tests/openapi.commit
+# says which commit it is from).
+#
+#   scripts/openapi                      clone the pinned commit and generate it
+#   MONOKULO_SRC=<checkout> scripts/openapi
+#                                        from a monokulo checkout at that commit
+#
+# Needs git and rustup (the commit's rust-toolchain.toml installs itself);
+# no Node. MONOKULO_READ_TOKEN, when set, is sent to GitHub (for a private
+# repository).
+set -eu
+cd "$(dirname "$0")/.."
+
+. tests/vectors/PIN
+out=$PWD/tests/openapi.json
+if [ -s "$out" ] && [ "$(cat tests/openapi.commit 2>/dev/null)" = "$commit" ]; then
+	echo "tests/openapi.json is from $commit already"
+	exit 0
+fi
+
+if [ -n "${MONOKULO_SRC:-}" ]; then
+	src=$MONOKULO_SRC
+	at=$(git -C "$src" rev-parse HEAD)
+	if [ "$at" != "$commit" ]; then
+		echo "$src is at $at, not the pinned $commit" >&2
+		exit 1
+	fi
+else
+	src=$(mktemp -d)
+	trap 'rm -rf "$src"' EXIT
+	auth=${MONOKULO_READ_TOKEN:+x-access-token:$MONOKULO_READ_TOKEN@}
+	git clone -q --filter=blob:none --no-checkout "https://${auth}${repository#https://}.git" "$src"
+	git -C "$src" checkout -q "$commit"
+fi
+
+rm -f tests/openapi.commit
+(cd "$src" && cargo xtask api openapi --out "$out")
+echo "$commit" > tests/openapi.commit
+echo "wrote tests/openapi.json from $commit"
