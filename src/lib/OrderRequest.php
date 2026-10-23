@@ -55,8 +55,7 @@ final class OrderRequest
     /**
      * The total as a decimal string in the currency's own decimal places
      * (2 for EUR, 0 for JPY, up to 12 for XMR), without trailing zeros:
-     * `12.5`, `1000`. Monokulo takes at most 2 decimals for a fiat
-     * currency, trailing zeros included, so the total is never padded.
+     * `12.5`, `1000`.
      */
     public static function amount(float $total, string $currency, int $decimals): string
     {

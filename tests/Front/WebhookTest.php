@@ -2,6 +2,7 @@
 namespace Monokulo\PrestaShop\Tests\Front;
 
 use Monokulo\PrestaShop\Logger;
+use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\ShopTestCase;
 use Monokulo\PrestaShop\Tests\Support\Vectors;
 use Monokulo\PrestaShop\Trace;
@@ -24,7 +25,12 @@ final class WebhookTest extends ShopTestCase {
 		$this->connect();
 		// As "Pay with Monero" leaves it: placed, mapped to the Monokulo order the vectors are about.
 		$this->order = $this->placedOrder();
-		$this->repository()->recordOrder(Vectors::orderId(), (int)$this->order->id, 1, self::HOST, '14.28', 'GBP', 1760000000);
+		$this->repository()->recordOrder(Vectors::orderId(), (int)$this->order->id, 1, self::HOST, '14.28', 'GBP', $this->dashboard(), 1760000000);
+	}
+
+	/** The order's page on the merchant's dashboard, as the create-order form gave it. */
+	private function dashboard(): string {
+		return self::$monokulo->url . Api::order(Vectors::orderId())['_links']['mk:dashboard-order']['href'];
 	}
 
 	/** Delivers `body` signed with `signature` as of the vectors' clock; returns the HTTP status. */
@@ -96,7 +102,16 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertCount(1, $payments);
 		$this->assertEqualsWithDelta((float)$order->total_paid, (float)$payments->getFirst()->amount, 0.001);
 		$this->assertStringContainsString('Monokulo: paid in full.', $this->lastNote());
-		$this->assertStringContainsString(self::$monokulo->url . '/stores/917701c2-15c7-4bcb-bbc8-72d9ab28e785/orders/' . Vectors::orderId(), $this->lastNote());
+		$this->assertStringEndsWith(' In Monokulo: ' . $this->dashboard(), $this->lastNote());
+	}
+
+	/** An order made before 0.3.0 has no dashboard link kept: its notes go without one. */
+	public function test_an_order_without_a_dashboard_link_gets_notes_without_one(): void {
+		$this->db()->execute('UPDATE `' . _DB_PREFIX_ . "monokulo_order` SET `dashboard` = ''");
+
+		$this->assertSame(200, $this->deliverVector('order.paid'));
+
+		$this->assertSame('Monokulo: paid in full.', $this->lastNote());
 	}
 
 	public function test_paid_in_xmr_is_paid_too(): void {
@@ -230,7 +245,7 @@ final class WebhookTest extends ShopTestCase {
 
 	/** The order's total changed after its first payment request (the vectors' order): a newer one is the current one. */
 	private function newerRequest(): string {
-		$this->repository()->recordOrder('order_newer', (int)$this->order->id, 1, self::HOST, '20.00', 'GBP', 1760000001);
+		$this->repository()->recordOrder('order_newer', (int)$this->order->id, 1, self::HOST, '20.00', 'GBP', '', 1760000001);
 
 		return 'order_newer';
 	}

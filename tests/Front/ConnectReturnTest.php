@@ -2,6 +2,7 @@
 namespace Monokulo\PrestaShop\Tests\Front;
 
 use Monokulo\PrestaShop\Plugin;
+use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\FakeMonokulo;
 use Monokulo\PrestaShop\Tests\Support\PrestaShop;
 use Monokulo\PrestaShop\Tests\Support\ShopTestCase;
@@ -16,7 +17,6 @@ use PHPUnit\Framework\Attributes\DataProvider;
 final class ConnectReturnTest extends ShopTestCase {
 	private const ADMIN = 'http://localhost:8093/admin-dev/index.php?controller=AdminModules&configure=monokulo&token=abc';
 
-	private const CREDENTIALS = ['public_key' => 'pk_new', 'secret_token' => 'sk_new', 'api' => '/api/v1', 'webhook_signing_secret' => 'whsec_new'];
 
 	/** @return array{redirect: string}|array{status: int, body: string} */
 	private function comeBack(array $query, int $shopId = 1): array {
@@ -29,12 +29,13 @@ final class ConnectReturnTest extends ShopTestCase {
 		return $this->repository()->createNonce($shopId, $host, self::ADMIN, $now ?: time());
 	}
 
-	private function monokuloFinishes(int $status, mixed $body): void {
-		self::$monokulo->respond('POST', '/plugins/connect/prestashop/finish', $status, $body);
+	private function monokuloFinishes(int $status, mixed $body, string $prefix = ''): void {
+		self::$monokulo->respond('POST', $prefix . '/plugins/connect/prestashop/finish', $status, $body, headers: $status === 200 ? [] : ['Content-Type' => 'application/problem+json']);
 	}
 
 	public function test_a_good_return_connects_the_shop_and_offers_monero(): void {
-		$this->monokuloFinishes(200, self::CREDENTIALS);
+		$finished = Api::finished();
+		$this->monokuloFinishes(200, $finished);
 		$this->assertFalse($this->module()->isConnected());
 
 		$answer = $this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
@@ -49,25 +50,44 @@ final class ConnectReturnTest extends ShopTestCase {
 		$this->assertSame('prestashop/' . Plugin::VERSION, $request['headers']['monokulo-client']);
 
 		$connection = $this->repository()->connection(self::HOST);
-		$this->assertSame([self::$monokulo->url . '/api/v1', 'pk_new', 'sk_new', 'whsec_new'], [$connection->api, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
+		$this->assertSame([self::$monokulo->url . '/api/v1', Api::ONION . '/api/v1', $finished['public_key'], $finished['secret_token'], $finished['webhook_signing_secret']], [$connection->api, $connection->onionApi, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
 		$this->assertTrue($this->module()->isConnected());
+	}
+
+	public function test_a_monokulo_without_an_onion_address_connects_without_one(): void {
+		$this->monokuloFinishes(200, Api::finished(onion: false));
+
+		$this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
+
+		$this->assertSame('', $this->repository()->connection(self::HOST)->onionApi);
+	}
+
+	/** A Monokulo under a path: the handshake goes there, and the entry it gives keeps the path. */
+	public function test_a_monokulo_under_a_path_connects_there(): void {
+		$this->setting(\Monokulo::ADDRESS, self::$monokulo->url . '/monokulo');
+		$this->monokuloFinishes(200, Api::under('/monokulo', Api::finished()), '/monokulo');
+
+		$answer = $this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
+
+		$this->assertSame(['redirect' => self::ADMIN . '&monokulo_connected=1'], $answer);
+		$this->assertSame(self::$monokulo->url . '/monokulo/api/v1', $this->repository()->connection(self::HOST)->api);
 	}
 
 	/** Connecting again replaces the shop's credentials (Monokulo replaced its webhook too). */
 	public function test_connecting_again_replaces_the_credentials(): void {
 		$this->connect();
-		$this->monokuloFinishes(200, self::CREDENTIALS);
+		$this->monokuloFinishes(200, Api::finished());
 
 		$this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
 
-		$this->assertSame('pk_new', $this->repository()->connection(self::HOST)->publicKey);
+		$this->assertSame(Api::finished()['public_key'], $this->repository()->connection(self::HOST)->publicKey);
 		$this->assertCount(1, $this->rows('SELECT * FROM `' . _DB_PREFIX_ . 'monokulo_connection`'));
 	}
 
 	/** The second shop's return lands on its own host and connects only it, with its own webhook address. */
 	public function test_a_second_shop_connects_on_its_own_host(): void {
 		$shopId = $this->addSecondShop();
-		$this->monokuloFinishes(200, self::CREDENTIALS);
+		$this->monokuloFinishes(200, Api::finished());
 
 		$answer = $this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce(self::SECOND_HOST, $shopId)], $shopId);
 
@@ -78,7 +98,7 @@ final class ConnectReturnTest extends ShopTestCase {
 	}
 
 	public function test_a_nonce_works_once(): void {
-		$this->monokuloFinishes(200, self::CREDENTIALS);
+		$this->monokuloFinishes(200, Api::finished());
 		$nonce = $this->nonce();
 		$this->comeBack(['token' => 'tok_1', 'nonce' => $nonce]);
 		$this->db()->execute('DELETE FROM `' . _DB_PREFIX_ . 'monokulo_connection`');
@@ -135,10 +155,11 @@ final class ConnectReturnTest extends ShopTestCase {
 
 	public static function finishFailures(): array {
 		return [
-			'no public address yet' => [503, ['error' => 'no public address'], 'unavailable'],
-			'token refused'         => [401, '', 'finish'],
-			'missing secret'        => [200, ['public_key' => 'pk', 'secret_token' => 'sk', 'api' => '/api/v1'], 'finish'],
-			'no API entry'          => [200, ['public_key' => 'pk', 'secret_token' => 'sk', 'webhook_signing_secret' => 'whsec'], 'finish'],
+			'no public address yet' => [503, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'no-public-address'), 'unavailable'],
+			'token refused'         => [401, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'invalid-connect-code'), 'finish'],
+			'body refused'          => [400, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'invalid-request'), 'finish'],
+			'missing secret'        => [200, array_diff_key(Api::finished(), ['webhook_signing_secret' => 1]), 'finish'],
+			'no API entry'          => [200, array_diff_key(Api::finished(), ['api' => 1]), 'finish'],
 		];
 	}
 

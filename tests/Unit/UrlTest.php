@@ -1,24 +1,12 @@
 <?php
 namespace Monokulo\PrestaShop\Tests\Unit;
 
-use Monokulo\PrestaShop\Connection;
 use Monokulo\PrestaShop\Url;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-final class ConnectionTest extends TestCase {
-	private function connection(): Connection {
-		return new Connection('shop.example', 'https://pay.example.com:8443/api/v1', 'pk_x', 'sk_x', 'whsec_x', 1);
-	}
-
-	/** The one API address not linked from the entry, and the merchant's own page for an order. */
-	public function test_where_logs_and_the_merchant_go(): void {
-		$c = $this->connection();
-
-		$this->assertSame('https://pay.example.com:8443/api/v1/logs', $c->logsUrl());
-		$this->assertSame('https://pay.example.com:8443/stores/st%201/orders/o1', $c->dashboardOrderUrl('st 1', 'o1'));
-	}
-
+/** Monokulo's links are resolved against the URL they came from, never built. */
+final class UrlTest extends TestCase {
 	public static function links(): array {
 		return [
 			'a path on the host'  => ['https://m.example/api/v1', '/checkout/order_1', 'https://m.example/checkout/order_1'],
@@ -28,6 +16,8 @@ final class ConnectionTest extends TestCase {
 			'scheme relative'     => ['https://m.example/api/v1', '//other.example/x', 'https://other.example/x'],
 			'relative to a file'  => ['https://m.example/api/v1', 'orders', 'https://m.example/api/orders'],
 			'relative to a folder' => ['https://m.example/api/v1/', 'orders', 'https://m.example/api/v1/orders'],
+			'under a path'        => ['https://example.com/monokulo/plugins/connect/prestashop/finish', '/monokulo/api/v1', 'https://example.com/monokulo/api/v1'],
+			'a form under a path' => ['https://example.com/monokulo/api/v1', '/monokulo/api/v1/orders', 'https://example.com/monokulo/api/v1/orders'],
 		];
 	}
 

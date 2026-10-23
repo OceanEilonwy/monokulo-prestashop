@@ -24,6 +24,7 @@ use Monokulo\PrestaShop\Shop\Orders;
 use Monokulo\PrestaShop\Shop\PrestaShopDatabase;
 use Monokulo\PrestaShop\Trace;
 use Monokulo\PrestaShop\TransportError;
+use Monokulo\PrestaShop\Url;
 use Monokulo\PrestaShop\WebhookReceiver;
 use PrestaShop\PrestaShop\Core\Payment\PaymentOption;
 
@@ -70,7 +71,7 @@ class Monokulo extends PaymentModule
     {
         $this->name = 'monokulo';
         $this->tab = 'payments_gateways';
-        $this->version = '0.2.0';
+        $this->version = '0.3.0';
         $this->author = 'Monokulo';
         $this->need_instance = 0;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.99.99'];
@@ -101,7 +102,7 @@ class Monokulo extends PaymentModule
             || !$this->registerHook(['paymentOptions', 'displayPaymentReturn', 'displayOrderDetail'])) {
             return false;
         }
-        $this->repository()->install((string) Configuration::getGlobalValue(self::ADDRESS));
+        $this->repository()->install();
 
         $awaiting = $this->installAwaitingStatus();
         Configuration::updateGlobalValue(self::ADDRESS, 'https://www.monokulo.com');
@@ -338,6 +339,7 @@ class Monokulo extends PaymentModule
                     '%key%' => $connection->publicKey,
                     '%date%' => Tools::displayDate(date('Y-m-d H:i:s', $connection->connectedAt), true),
                 ]) : '',
+                'onion' => $connection && $connection->onionApi !== '' ? $this->text('connected_onion', ['%onion%' => Url::origin($connection->onionApi)]) : '',
                 'connect' => $back . '&monokulo_connect=' . (int) $shop->id,
             ];
         }
@@ -433,8 +435,8 @@ class Monokulo extends PaymentModule
             return 'monokulo_connect_error=unreachable';
         }
 
-        $this->repository()->saveConnection(new Connection($host, $credentials['api'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
-        $this->log()->info(sprintf('%s connected to Monokulo as %s.', $host, $credentials['public_key']));
+        $this->repository()->saveConnection(new Connection($host, $credentials['api'], $credentials['onion_api'] ?? '', $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
+        $this->log()->info(sprintf('%s connected to Monokulo as %s%s.', $host, $credentials['public_key'], $credentials['onion_api'] !== null ? ', with its onion address' : ', which has no onion address'));
 
         return 'monokulo_connected=1';
     }
@@ -614,13 +616,34 @@ class Monokulo extends PaymentModule
             return ['error' => $this->text('error_unreachable'), 'retry' => $retry];
         }
 
-        $checkout = $monokuloOrder['checkout'];
-        if ($this->repository()->recordOrder($monokuloOrder['order_id'], (int) $order->id, (int) $order->id_shop, $connection->host, $body['amount'], $body['currency'], time())) {
-            $this->orders()->note($order, $this->text('note_started', ['%url%' => $checkout]));
-            $this->log()->info(sprintf('Order %d: customer sent to Monokulo order %s.', $order->id, $monokuloOrder['order_id']));
+        // A customer on the shop's .onion address stays on Tor.
+        $onTor = $this->customerOnTor();
+        $checkout = $onTor ? $monokuloOrder['onion_checkout'] : $monokuloOrder['checkout'];
+        $dashboard = $monokuloOrder['dashboard'] ?? '';
+        if ($this->repository()->recordOrder($monokuloOrder['order_id'], (int) $order->id, (int) $order->id_shop, $connection->host, $body['amount'], $body['currency'], $dashboard, time()) && $checkout !== null) {
+            $this->orders()->note($order, $this->text('note_started', ['%url%' => $checkout]) . ($dashboard !== '' ? ' ' . $this->text('see_in_monokulo', ['%url%' => $dashboard]) : ''));
+            $this->log()->info(sprintf('Order %d: customer sent to Monokulo order %s%s.', $order->id, $monokuloOrder['order_id'], $onTor ? ' over Tor' : ''));
+        }
+        if ($checkout === null) {
+            $this->log()->error(sprintf('Order %d: the customer is on the shop\'s .onion address, but Monokulo order %s has no onion checkout: your Monokulo has no onion address. Set up Tor on your Monokulo, or don\'t offer the shop over Tor.', $order->id, $monokuloOrder['order_id']));
+            $this->forward($connection);
+
+            return ['error' => $this->text('error_no_tor'), 'retry' => $retry];
         }
 
         return ['redirect' => $checkout];
+    }
+
+    /**
+     * Whether the customer's request came to a `.onion` address: the shop
+     * served over Tor. They must be sent to Monokulo's onion checkout, never
+     * to its web address.
+     */
+    public function customerOnTor(): bool
+    {
+        $host = strtolower((string) parse_url('http://' . ($_SERVER['HTTP_HOST'] ?? ''), PHP_URL_HOST));
+
+        return str_ends_with($host, '.onion');
     }
 
     /** Whether the order is waiting for its Monero payment (one of the merchant's not-yet-paid statuses). */
@@ -742,7 +765,7 @@ class Monokulo extends PaymentModule
 
     private function client(): Client
     {
-        return new Client($this->trace());
+        return new Client($this->trace(), $this->repository());
     }
 
     private function trace(): Trace
@@ -801,6 +824,7 @@ class Monokulo extends PaymentModule
             'error_unavailable' => $this->trans('Monero payments are not available for this store right now. Please contact the store owner.', [], $shop),
             'error_currency' => $this->trans('This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', [], $shop),
             'error_generic' => $this->trans('The Monero payment could not be started. Please try again, or contact the store.', [], $shop),
+            'error_no_tor' => $this->trans('Monero payments can\'t be made over Tor at this store right now. Please contact the store.', [], $shop),
             'error_unreachable' => $this->trans('The Monero payment service could not be reached. Please try again shortly.', [], $shop),
             'try_again' => $this->trans('Try again', [], $shop),
             'payment_problem' => $this->trans('Monero payment', [], $shop),
@@ -840,6 +864,7 @@ class Monokulo extends PaymentModule
             'stores' => $this->trans('Stores', [], $admin),
             'stores_help' => $this->trans('Each shop connects to a store in your Monokulo, found by the shop\'s web address. Shops that share an address share one connection.', [], $admin),
             'connected_as' => $this->trans('Connected as %key% since %date%', [], $admin),
+            'connected_onion' => $this->trans('Customers on the shop\'s .onion address pay on Monokulo\'s: %onion%', [], $admin),
             'not_connected' => $this->trans('Not connected', [], $admin),
             'address_first' => $this->trans('Save your Monokulo address first.', [], $admin),
             'connected' => $this->trans('Your store is connected. Monero is now offered at checkout.', [], $admin),

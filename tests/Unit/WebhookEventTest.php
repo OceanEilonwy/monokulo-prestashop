@@ -16,7 +16,6 @@ final class WebhookEventTest extends TestCase {
 		$this->assertSame($delivery['headers']['X-Monokulo-Event'], $event->event);
 		$this->assertSame($delivery['headers']['X-Monokulo-Event-Id'], $event->eventId);
 		$this->assertSame(Vectors::orderId(), $event->orderId);
-		$this->assertNotNull($event->storeId);
 	}
 
 	public function test_the_double_spend_events_carry_their_transaction(): void {
@@ -43,12 +42,11 @@ final class WebhookEventTest extends TestCase {
 		$this->assertNull(WebhookEvent::parse($body));
 	}
 
-	/** Fields Monokulo adds later, or a store without an id, don't stop it. */
+	/** Fields Monokulo adds later, or optional ones left out, don't stop it. */
 	public function test_unknown_and_missing_optional_fields_are_fine(): void {
 		$event = WebhookEvent::parse('{"event":"order.refunded","event_id":"evt_9","order_id":"o1","new_field":{"x":1}}');
 
 		$this->assertSame('order.refunded', $event->event);
-		$this->assertNull($event->storeId);
 		$this->assertNull($event->txid);
 	}
 }

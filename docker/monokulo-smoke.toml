@@ -8,7 +8,18 @@
 # - signup: anyone can make an account (the test signs up a merchant).
 # - engine.monero_node: a wallet can only be added on a network with a node.
 #   Nothing is paid in the smoke test, so the node needn't answer.
+# - onion_uri, tor, abuse.onion_listener: an onion address (the Tor
+#   Project's own, as Monokulo's tests use), served by an external tor that
+#   isn't there: Monokulo then links each order's onion checkout and gives
+#   the handshake its onion entry, which is all the shop sees of Tor.
 public_uri = "http://localhost:8081"
+onion_uri = "http://2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion"
+
+[tor]
+mode = "external"
+
+[abuse]
+onion_listener = "127.0.0.1:18093"
 
 [server]
 bind = "127.0.0.1:8081"

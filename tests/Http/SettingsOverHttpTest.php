@@ -56,6 +56,16 @@ final class SettingsOverHttpTest extends TestCase {
 			$this->assertStringContainsString($label, $text);
 		}
 		$this->assertMatchesRegularExpression('/name="MONOKULO_OS_PAID".*?<option value="' . Shop::setting('PS_OS_PAYMENT') . '"\s+selected/s', $page->body);
+		$this->assertStringNotContainsString('.onion', $text, 'connected before 0.3.0, or to a Monokulo with no onion address');
+	}
+
+	/** Connected to a Monokulo with an onion address: Tor customers pay there. */
+	public function test_over_http_the_page_shows_monokulos_onion_address(): void {
+		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', api = 'https://pay.example.com/api/v1', onion_api = 'http://abcdef.onion/api/v1', public_key = 'pk_test', secret_token = 'sk', webhook_secret = 'wh', connected_at = 1760000000");
+
+		$text = Shop::settingsPage($this->browser)->text();
+
+		$this->assertStringContainsString('Customers on the shop\'s .onion address pay on Monokulo\'s: http://abcdef.onion', $text);
 	}
 
 	public function test_over_http_no_connect_button_before_there_is_an_address(): void {

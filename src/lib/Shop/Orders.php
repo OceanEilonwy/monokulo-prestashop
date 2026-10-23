@@ -12,7 +12,6 @@ declare(strict_types=1);
 
 namespace Monokulo\PrestaShop\Shop;
 
-use Monokulo\PrestaShop\Connection;
 use Monokulo\PrestaShop\Decision;
 use Monokulo\PrestaShop\OrderUpdater;
 use Monokulo\PrestaShop\WebhookEvent;
@@ -45,13 +44,13 @@ final class Orders implements OrderUpdater
      *   note only.
      * - A paid order never goes back: a later event is a note.
      */
-    public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest, bool $paidElsewhere, Connection $connection): void
+    public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest, bool $paidElsewhere, string $dashboard): void
     {
         $order = new \Order($orderId);
         if (!\Validate::isLoadedObject($order)) {
             throw new \RuntimeException('order ' . $orderId . ' no longer exists');
         }
-        $link = $event->storeId ? ' ' . $this->module->text('see_in_monokulo', ['%url%' => $connection->dashboardOrderUrl($event->storeId, $event->orderId)]) : '';
+        $link = $dashboard !== '' ? ' ' . $this->module->text('see_in_monokulo', ['%url%' => $dashboard]) : '';
         $transaction = $event->txid ?? $this->module->text('note_unknown_transaction');
         $note = $this->module->text($decision->note, ['%transaction%' => $transaction]);
         if (!$latest) {

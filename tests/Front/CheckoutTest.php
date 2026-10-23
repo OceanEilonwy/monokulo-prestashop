@@ -119,8 +119,73 @@ final class CheckoutTest extends ShopTestCase {
 			'idempotency_key'        => 'ps:1:' . $order->id . ':' . $amount . ':GBP',
 		], json_decode($request['body'], true));
 
-		$this->assertSame(['Monokulo: the customer was sent to pay this order with Monero here: ' . $checkout], $this->notes((int)$order->id));
-		$this->assertSame([['monokulo_order_id' => 'order_42', 'id_order' => (string)$order->id, 'id_shop' => '1', 'host' => self::HOST, 'amount' => $amount, 'currency' => 'GBP']], $this->rows('SELECT `monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency` FROM `' . _DB_PREFIX_ . 'monokulo_order`'));
+		$dashboard = self::$monokulo->url . Api::order('order_42')['_links']['mk:dashboard-order']['href'];
+		$this->assertSame(['Monokulo: the customer was sent to pay this order with Monero here: ' . $checkout . ' In Monokulo: ' . $dashboard], $this->notes((int)$order->id));
+		$this->assertSame([['monokulo_order_id' => 'order_42', 'id_order' => (string)$order->id, 'id_shop' => '1', 'host' => self::HOST, 'amount' => $amount, 'currency' => 'GBP', 'dashboard' => $dashboard]], $this->rows('SELECT `monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency`, `dashboard` FROM `' . _DB_PREFIX_ . 'monokulo_order`'));
+	}
+
+	/** A Monokulo served under a path: the module follows its links there. */
+	public function test_a_monokulo_under_a_path_is_followed_there(): void {
+		$this->connect(api: '/monokulo/api/v1');
+		self::$monokulo->api('order_42', prefix: '/monokulo');
+
+		$answer = $this->pay($this->cart());
+
+		$this->assertSame(['redirect' => self::$monokulo->url . '/monokulo/checkout/order_42'], $answer);
+		$this->assertSame(['/monokulo/api/v1', '/monokulo/api/v1/orders'], array_column(self::$monokulo->requests(), 'path'));
+		$this->assertStringStartsWith(self::$monokulo->url . '/monokulo/stores/', $this->rows('SELECT `dashboard` FROM `' . _DB_PREFIX_ . 'monokulo_order`')[0]['dashboard']);
+	}
+
+	/**
+	 * A customer on the shop's .onion address stays on Tor: they go to the
+	 * order's onion checkout, never to Monokulo's web address.
+	 */
+	public function test_a_customer_on_the_shops_onion_address_pays_over_tor(): void {
+		$this->connect(onionApi: Api::ONION . '/api/v1');
+		$this->monokuloAnswers('order_42');
+		$_SERVER['HTTP_HOST'] = 'shopxyz.onion';
+		$cart = $this->cart();
+
+		try {
+			$answer = $this->pay($cart);
+		} finally {
+			$_SERVER['HTTP_HOST'] = self::HOST;
+		}
+
+		$this->assertSame(['redirect' => Api::ONION . '/checkout/order_42'], $answer);
+		$order = \Order::getByCartId((int)$cart->id);
+		$this->assertStringStartsWith('Monokulo: the customer was sent to pay this order with Monero here: ' . Api::ONION . '/checkout/order_42 ', $this->notes((int)$order->id)[0]);
+	}
+
+	/**
+	 * A Monokulo without an onion address has no onion checkout: a Tor
+	 * customer is told, not sent to the web, and the merchant's log says why.
+	 */
+	public function test_a_customer_on_tor_is_not_sent_to_the_web(): void {
+		$this->connect();
+		self::$monokulo->api('order_42', onion: false);
+		$_SERVER['HTTP_HOST'] = 'shopxyz.onion:80';
+		$cart = $this->cart();
+		$before = $this->logSize();
+
+		try {
+			$answer = $this->pay($cart);
+		} finally {
+			$_SERVER['HTTP_HOST'] = self::HOST;
+		}
+
+		$order = \Order::getByCartId((int)$cart->id);
+		$this->assertSame(['error' => 'Monero payments can\'t be made over Tor at this store right now. Please contact the store.', 'retry' => $this->module()->payLink((int)$cart->id, $order->secure_key)], $answer);
+		$this->assertStringContainsString('your Monokulo has no onion address', $this->logSince($before));
+		$this->assertSame($this->module()->orderStatus('pending'), $this->orderStatus((int)$order->id), 'placed, to pay another way');
+	}
+
+	/** On the shop's web address, the web checkout, whether or not Monokulo has an onion address. */
+	public function test_a_customer_on_the_web_pays_on_the_web(): void {
+		$this->connect(onionApi: Api::ONION . '/api/v1');
+		$this->monokuloAnswers('order_42');
+
+		$this->assertSame(['redirect' => self::$monokulo->url . '/checkout/order_42'], $this->pay($this->cart()));
 	}
 
 	/**
@@ -153,8 +218,8 @@ final class CheckoutTest extends ShopTestCase {
 	public static function failures(): array {
 		return [
 			'busy'          => [429, Api::problem('rate-limited', 429, 'Too many requests', 'slow down'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: slow down (rate limited'],
-			'key rejected'  => [401, Api::problem('unauthorized', 401, 'No valid key', 'Send a key.'), 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
-			'not priced'    => [400, Api::problem('invalid-amount', 400, 'The order can\'t be priced', 'unsupported currency: GBP'), 'This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', 'HTTP 400: unsupported currency: GBP (Monokulo cannot price this order'],
+			'key rejected'  => [401, Api::recordedProblem('get', '/api/v1', 'unauthorized'), 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
+			'not priced'    => [400, Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount'), 'This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', 'HTTP 400: ' . Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount')['detail'] . ' (Monokulo cannot price this order'],
 			'anything else' => [500, 'oops', 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: oops'],
 		];
 	}
@@ -194,7 +259,7 @@ final class CheckoutTest extends ShopTestCase {
 	}
 
 	public function test_an_unreachable_monokulo_says_so(): void {
-		$this->repository()->saveConnection(new Connection(self::HOST, 'http://127.0.0.1:' . FakeMonokulo::freePort() . '/api/v1', 'pk_test', 'sk_test', 'wh', 1));
+		$this->repository()->saveConnection(new Connection(self::HOST, 'http://127.0.0.1:' . FakeMonokulo::freePort() . '/api/v1', '', 'pk_test', 'sk_test', 'wh', 1));
 
 		$answer = $this->pay($this->cart());
 
@@ -287,12 +352,12 @@ final class CheckoutTest extends ShopTestCase {
 
 		$this->pay($this->cart());
 		$requests = self::$monokulo->requests();
-		$this->assertSame(['/api/v1', '/api/v1/orders', '/api/v1/logs'], array_column($requests, 'path'));
-		$this->assertSame('Bearer sk_test', $requests[2]['headers']['authorization']);
-		$entries = json_decode($requests[2]['body'], true)['entries'];
+		$this->assertSame(['/api/v1/orders', '/api/v1/logs'], array_column($requests, 'path'), 'the entry, kept from the first order, has the send-logs form');
+		$this->assertSame('Bearer sk_test', $requests[1]['headers']['authorization']);
+		$entries = json_decode($requests[1]['body'], true)['entries'];
 		$this->assertSame('error', $entries[0]['level']);
 		$this->assertStringContainsString('HTTP 429: slow down', $entries[0]['message']);
-		$this->assertSame(substr($requests[1]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
+		$this->assertSame(substr($requests[0]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
 	}
 
 	/** On the order confirmation page and the order in the customer's account: back to the payment while unpaid. */

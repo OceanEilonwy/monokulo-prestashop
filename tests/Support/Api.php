@@ -2,74 +2,118 @@
 namespace Monokulo\PrestaShop\Tests\Support;
 
 /**
- * Bodies of Monokulo's HTTP API (`/api/v1`) as a shop's secret key gets
- * them, for the stand-in Monokulo. The smoke suite checks their shape
- * against a real Monokulo's own description of its API.
+ * What Monokulo's API answers, from its OpenAPI document at the pinned
+ * commit (tests/openapi.json, which scripts/openapi generates). Monokulo
+ * records its examples against a test engine and checks each against the
+ * document, so the stand-in Monokulo answers with real exchanges: the entry
+ * and orders as the store's secret key sees them, the handshake, problems.
+ *
+ * The recordings are of a Monokulo with an onion address; `onion: false`
+ * leaves its onion links out, as a Monokulo without one answers.
  */
 final class Api {
-	private const CURIES = [['name' => 'mk', 'href' => 'https://docs.monokulo.com/rels/{rel}', 'templated' => true]];
+	/** The onion address the recordings were made with. */
+	public const ONION = 'http://2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion';
 
-	/** `GET /api/v1`: the entry, with its `create-order` form. */
-	public static function entry(): array {
-		return [
-			'_links' => [
-				'curies' => self::CURIES,
-				'self' => ['href' => '/api/v1'],
-				'mk:store' => ['href' => '/api/v1/store', 'title' => 'The store the key belongs to.'],
-				'mk:orders' => ['href' => '/api/v1/orders', 'title' => 'The store\'s orders, newest first, a page at a time.'],
-				'mk:events' => ['href' => '/api/v1/events', 'title' => 'The store\'s events.'],
-				'service-desc' => ['href' => '/api/v1/openapi.json', 'type' => 'application/openapi+json'],
-				'service-doc' => ['href' => 'https://docs.monokulo.com/api/', 'type' => 'text/html'],
-			],
-			'_templates' => [
-				'create-order' => [
-					'title' => 'Make an order.',
-					'method' => 'POST',
-					'target' => '/api/v1/orders',
-					'contentType' => 'application/json',
-					'properties' => [
-						['name' => 'amount', 'required' => true, 'type' => 'text'],
-						['name' => 'currency', 'required' => true, 'type' => 'text'],
-						['name' => 'merchant_order_id', 'type' => 'text'],
-						['name' => 'description', 'type' => 'text'],
-						['name' => 'show_merchant_order_id', 'type' => 'checkbox'],
-						['name' => 'idempotency_key', 'type' => 'text'],
-					],
-				],
-			],
-		];
+	/** @var array<string, mixed>|null */
+	private static ?array $document = null;
+
+	/** @return array<string, mixed> the OpenAPI document */
+	public static function document(): array {
+		if (self::$document === null) {
+			$file = __DIR__ . '/../openapi.json';
+			preg_match('/^commit=(\S+)/m', (string)file_get_contents(__DIR__ . '/../vectors/PIN'), $pin);
+			$from = trim((string)@file_get_contents(__DIR__ . '/../openapi.commit'));
+			if (!is_file($file) || $from !== ($pin[1] ?? '')) {
+				throw new \RuntimeException('tests/openapi.json is missing, or not from the commit in tests/vectors/PIN: run scripts/openapi');
+			}
+			self::$document = json_decode((string)file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
+		}
+
+		return self::$document;
 	}
 
-	/** An order just made: `201 Created` from the `create-order` form. */
-	public static function order(string $orderId): array {
-		return [
-			'order_id' => $orderId,
-			'status' => 'pending',
-			'is_final' => false,
-			'address' => '8BB...',
-			'xmr_amount_piconero' => 120000000000,
-			'amount_received_piconero' => 0,
-			'amount' => '12.5',
-			'currency' => 'EUR',
-			'merchant_order_id' => 'XKBKNABJK',
-			'description' => 'Order XKBKNABJK: Blue mug',
-			'show_merchant_order_id' => false,
-			'confirmations' => 0,
-			'confirmations_required' => 10,
-			'created_at' => 1760000000,
-			'expires_at' => 1760003600,
-			'_links' => [
-				'curies' => self::CURIES,
-				'self' => ['href' => '/api/v1/orders/' . $orderId],
-				'collection' => ['href' => '/api/v1/orders'],
-				'mk:order-events' => ['href' => '/api/v1/orders/' . $orderId . '/events'],
-				'mk:checkout' => ['href' => '/checkout/' . $orderId, 'type' => 'text/html'],
-			],
-		];
+	/** @return array<string, mixed> the operation `method path` (`get`, `/api/v1`) */
+	public static function operation(string $method, string $path): array {
+		return self::document()['paths'][$path][$method];
 	}
 
-	/** An `application/problem+json` refusal. */
+	/** @return array<string, mixed> the recorded example `name` of `method path`'s `status` answer */
+	public static function example(string $method, string $path, string $status, string $name): array {
+		$content = self::operation($method, $path)['responses'][$status]['content'];
+
+		return reset($content)['examples'][$name]['value'];
+	}
+
+	/** @return array<string, mixed> a schema in the document's components, by name */
+	public static function schema(string $name): array {
+		return self::document()['components']['schemas'][$name];
+	}
+
+	/** @return array<string, mixed> the entry, `GET /api/v1`, as the store's secret key sees it */
+	public static function entry(bool $onion = true): array {
+		$entry = self::example('get', '/api/v1', '200', 'sk');
+		if (!$onion) {
+			unset($entry['_links']['mk:onion-api']);
+		}
+
+		return $entry;
+	}
+
+	/** @return array<string, mixed> order `orderId` as the create-order form answers the secret key */
+	public static function order(string $orderId, bool $onion = true): array {
+		$example = self::example('post', '/api/v1/orders', '201', 'sk');
+		$order = json_decode(str_replace($example['order_id'], $orderId, (string)json_encode($example)), true);
+		if (!$onion) {
+			unset($order['_links']['mk:onion-checkout']);
+		}
+
+		return $order;
+	}
+
+	/** @return array<string, mixed> the plugin handshake's answer (`POST /plugins/connect/{slug}/finish`) */
+	public static function finished(bool $onion = true): array {
+		$answer = self::operation('post', '/plugins/connect/{slug}/finish')['responses']['200']['content']['application/json']['example'];
+		if (!$onion) {
+			unset($answer['onion_api']);
+		}
+
+		return $answer;
+	}
+
+	/** @return array<string, mixed> the recorded problem `name` that `method path` answers with */
+	public static function recordedProblem(string $method, string $path, string $name): array {
+		foreach (self::operation($method, $path)['responses'] as $answer) {
+			$examples = $answer['content']['application/problem+json']['examples'] ?? [];
+			if (isset($examples[$name])) {
+				return $examples[$name]['value'];
+			}
+		}
+
+		throw new \RuntimeException("no recorded $name problem for $method $path");
+	}
+
+	/** @return array<string, mixed> a problem the document has no recording of, in the same shape */
 	public static function problem(string $name, int $status, string $title, string $detail): array {
 		return ['type' => 'https://docs.monokulo.com/problems/' . $name, 'title' => $title, 'status' => $status, 'detail' => $detail];
+	}
+
+	/**
+	 * `body` as a Monokulo served under `prefix` (`/monokulo`) answers it:
+	 * every path it links or posts to starts with the prefix. Onion links
+	 * and links elsewhere are absolute, and stay as they are.
+	 *
+	 * @param array<string, mixed> $body
+	 *
+	 * @return array<string, mixed>
+	 */
+	public static function under(string $prefix, array $body): array {
+		array_walk_recursive($body, static function (&$value, $key) use ($prefix): void {
+			if (in_array($key, ['href', 'target', 'api'], true) && is_string($value) && str_starts_with($value, '/') && !str_starts_with($value, '//')) {
+				$value = $prefix . $value;
+			}
+		});
+
+		return $body;
 	}
 }

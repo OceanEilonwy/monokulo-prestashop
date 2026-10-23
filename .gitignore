@@ -4,3 +4,5 @@
 /coverage/
 /src/config.xml
 /src/config_*.xml
+/tests/openapi.json
+/tests/openapi.commit

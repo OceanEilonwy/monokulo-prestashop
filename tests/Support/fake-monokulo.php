@@ -29,10 +29,19 @@ file_put_contents($dir . '/requests.jsonl', json_encode([
 ]) . "\n", FILE_APPEND | LOCK_EX);
 
 $responses = is_file($dir . '/responses.json') ? json_decode((string)file_get_contents($dir . '/responses.json'), true) : [];
-$response = $responses[$key] ?? ['status' => 404, 'body' => '{"error":"not found"}'];
+$response = $responses[$key] ?? ['status' => 404, 'body' => '{"type":"https://docs.monokulo.com/problems/not-found","title":"Not found","status":404}', 'headers' => ['Content-Type' => 'application/problem+json']];
 
 if (!empty($response['delay'])) {
 	sleep((int)$response['delay']);
+}
+
+// An ETag the client sent back in If-None-Match: not modified.
+$etag = $response['headers']['ETag'] ?? null;
+if ($etag !== null && ($headers['if-none-match'] ?? null) === $etag) {
+	http_response_code(304);
+	header('ETag: ' . $etag);
+	header('Cache-Control: ' . ($response['headers']['Cache-Control'] ?? 'no-store'));
+	exit;
 }
 
 http_response_code((int)$response['status']);

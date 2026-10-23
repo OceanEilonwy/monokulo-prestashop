@@ -25,32 +25,22 @@ final class Connection
 {
     /**
      * @param string $api the API's entry, an absolute URL
-     *                    (`https://www.monokulo.com/api/v1`), which every other
+     *                    (`https://www.monokulo.com/api/v1`, or with the
+     *                    path a Monokulo is served under), which every other
      *                    API address is found from
+     * @param string $onionApi the same entry on Monokulo's onion address, or
+     *                         '' when it had none when the shop connected
+     * @param Entry|null $entry the entry as last read, or null before the first order
      */
     public function __construct(
         public readonly string $host,
         public readonly string $api,
+        public readonly string $onionApi,
         public readonly string $publicKey,
         public readonly string $secretToken,
         public readonly string $webhookSecret,
         public readonly int $connectedAt,
+        public readonly ?Entry $entry = null,
     ) {
-    }
-
-    /**
-     * Where a plugin's reports go: `logs` under the entry. The entry has
-     * no link to it, so it is the one address not found by following
-     * links.
-     */
-    public function logsUrl(): string
-    {
-        return rtrim($this->api, '/') . '/logs';
-    }
-
-    /** The order's page in the merchant's Monokulo, on the API's host. */
-    public function dashboardOrderUrl(string $storeId, string $orderId): string
-    {
-        return Url::origin($this->api) . '/stores/' . rawurlencode($storeId) . '/orders/' . rawurlencode($orderId);
     }
 }

@@ -19,6 +19,7 @@
           <td>
             {if $store.connected}
               {$store.connected|escape:'html':'UTF-8'}
+              {if $store.onion}<br><span class="text-muted monokulo-onion">{$store.onion|escape:'html':'UTF-8'}</span>{/if}
             {else}
               {$monokulo_text.not_connected|escape:'html':'UTF-8'}
             {/if}
