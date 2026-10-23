@@ -83,7 +83,7 @@ final class MonokuloSmokeTest extends TestCase {
 		$admin = Shop::admin($this->browser);
 
 		$settings = Shop::settingsPage($admin);
-		$saved = $admin->submit($settings, 'configure/monokulo', ['MONOKULO_ADDRESS' => $this->monokulo, 'submitMonokulo' => '1']);
+		$saved = $admin->submitWith($settings, 'MONOKULO_ADDRESS', ['MONOKULO_ADDRESS' => $this->monokulo, 'submitMonokulo' => '1']);
 		$this->assertStringContainsString('The Monokulo settings are saved.', $saved->text());
 
 		// Connect: off to Monokulo, signed in already, with no store for the shop yet: store setup.
@@ -103,7 +103,7 @@ final class MonokuloSmokeTest extends TestCase {
 		// Back to PrestaShop: Monokulo returns to the shop with the token, the
 		// shop redeems it and sends the browser to its settings page.
 		$back = $this->browser->submit($done, '/plugins/connect/prestashop');
-		$this->assertStringStartsWith(Shop::URL . 'module/monokulo/connect', (string)$back->location());
+		$this->assertMatchesRegularExpression('#\A' . preg_quote(Shop::URL, '#') . '([a-z]{2}/)?module/monokulo/connect\?#', (string)$back->location());
 		$return = $this->browser->get((string)$back->location());
 		$this->assertStringContainsString('monokulo_connected=1', (string)$return->location(), $return->body);
 

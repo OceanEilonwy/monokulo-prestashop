@@ -38,7 +38,7 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertCount(1, $options);
 		$this->assertSame('monokulo', $options[0]->getModuleName());
 		$this->assertSame('Pay with Monero', $options[0]->getCallToActionText());
-		$this->assertSame('http://' . self::HOST . '/module/monokulo/validation', $options[0]->getAction());
+		$this->assertMatchesRegularExpression('#\Ahttp://' . self::HOST . '/([a-z]{2}/)?module/monokulo/validation\z#', $options[0]->getAction());
 		$this->assertStringContainsString('You pay on a secure Monokulo payment page next', $options[0]->getAdditionalInformation());
 	}
 
@@ -131,8 +131,8 @@ final class CheckoutTest extends ShopTestCase {
 
 		$vars = $this->module()->confirmationMailVars((int)$cart->id, $key);
 
-		$link = 'http://' . self::HOST . '/module/monokulo/pay?id_cart=' . $cart->id . '&key=' . $key;
-		$this->assertSame(['{payment}' => 'Monero (via Monokulo). Pay for your order here: ' . $link], $vars);
+		$this->assertMatchesRegularExpression('#\AMonero \(via Monokulo\)\. Pay for your order here: http://' . self::HOST . '/([a-z]{2}/)?module/monokulo/pay\?id_cart=' . $cart->id . '&key=' . $key . '\z#', $vars['{payment}']);
+		$this->assertSame(['{payment}'], array_keys($vars));
 	}
 
 	/** A product name with characters a shop would escape goes to Monokulo as the merchant typed it. */

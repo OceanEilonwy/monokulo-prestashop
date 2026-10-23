@@ -63,6 +63,18 @@ final class Browser {
 		return $this->post($form['action'], $fields + $form['fields']);
 	}
 
+	/**
+	 * Submits the form on `page` that has a field named `field`, as submit()
+	 * does.
+	 *
+	 * @param array<string, string> $fields
+	 */
+	public function submitWith(Page $page, string $field, array $fields = []): Page {
+		$form = $page->formWith($field);
+
+		return $this->post($form['action'], $fields + $form['fields']);
+	}
+
 	/** @param array<string, mixed>|string|null $body */
 	private function request(string $method, string $url, array|string|null $body, array $headers): Page {
 		$curl = curl_init($url);

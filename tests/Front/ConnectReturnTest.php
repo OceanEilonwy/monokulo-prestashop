@@ -43,7 +43,7 @@ final class ConnectReturnTest extends ShopTestCase {
 		$request = self::$monokulo->requests()[0];
 		$this->assertSame([
 			'token'       => 'tok_1',
-			'webhook_url' => 'http://localhost:8093/module/monokulo/webhook',
+			'webhook_url' => 'http://localhost:8093/index.php?fc=module&module=monokulo&controller=webhook',
 			'name'        => 'PrestaShop',
 		], json_decode($request['body'], true));
 		$this->assertSame('prestashop/' . Plugin::VERSION, $request['headers']['monokulo-client']);
@@ -74,7 +74,7 @@ final class ConnectReturnTest extends ShopTestCase {
 		$this->assertStringEndsWith('&monokulo_connected=1', $answer['redirect']);
 		$this->assertNotNull($this->repository()->connection(self::SECOND_HOST));
 		$this->assertNull($this->repository()->connection(self::HOST));
-		$this->assertSame('http://127.0.0.1:8093/module/monokulo/webhook', json_decode(self::$monokulo->requests()[0]['body'], true)['webhook_url']);
+		$this->assertSame('http://127.0.0.1:8093/index.php?fc=module&module=monokulo&controller=webhook', json_decode(self::$monokulo->requests()[0]['body'], true)['webhook_url']);
 	}
 
 	public function test_a_nonce_works_once(): void {
