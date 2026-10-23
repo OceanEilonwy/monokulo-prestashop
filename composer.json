@@ -1,0 +1,27 @@
+{
+    "name": "monokulo/prestashop",
+    "description": "Monokulo payment module for PrestaShop: accept Monero through your own self-hosted Monokulo. This file is for the module's tests and linting only: the module has no runtime dependencies beyond PrestaShop.",
+    "license": "GPL-3.0-or-later",
+    "type": "project",
+    "require": {
+        "php": ">=8.1"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.64",
+        "phpunit/phpcov": "^9.0",
+        "phpunit/phpunit": "^10.5",
+        "prestashop/php-dev-tools": "^5.0"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Monokulo\\PrestaShop\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "platform": {
+            "php": "8.1.0"
+        },
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}

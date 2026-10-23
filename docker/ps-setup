@@ -1,0 +1,81 @@
+#!/bin/sh
+# Installs PrestaShop into the database once (PrestaShop's own CLI
+# installer, with its demo catalogue), the way a merchant's first visit to
+# /install would. Safe to run again.
+set -eu
+
+: "${SHOP_DOMAIN:=localhost:8093}"
+: "${DB_SERVER:=127.0.0.1}"
+: "${DB_PORT:=33063}"
+: "${DB_NAME:=prestashop}"
+: "${DB_USER:=prestashop}"
+: "${DB_PASSWD:=prestashop}"
+: "${ADMIN_EMAIL:=admin@example.test}"
+: "${ADMIN_PASSWORD:=admin-password-1}"
+
+cd /var/www/html
+
+sql() {
+	mysql -h"$DB_SERVER" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASSWD" "$DB_NAME" -e "$1"
+}
+
+for i in $(seq 1 60); do
+	if mysqladmin ping -h"$DB_SERVER" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASSWD" --silent 2>/dev/null; then
+		break
+	fi
+	sleep 1
+done
+
+if [ -d admin-dev ] && sql 'SELECT 1 FROM ps_configuration LIMIT 1' > /dev/null 2>&1; then
+	echo "PrestaShop is already installed."
+	exit 0
+fi
+
+runuser -u www-data -- php -d memory_limit=-1 install/index_cli.php \
+	--domain="$SHOP_DOMAIN" \
+	--db_server="$DB_SERVER:$DB_PORT" \
+	--db_name="$DB_NAME" \
+	--db_user="$DB_USER" \
+	--db_password="$DB_PASSWD" \
+	--prefix=ps_ \
+	--firstname=Ada \
+	--lastname=Admin \
+	--email="$ADMIN_EMAIL" \
+	--password="$ADMIN_PASSWORD" \
+	--language=en \
+	--country=gb \
+	--newsletter=0 \
+	--send_email=0 \
+	--ssl=0
+
+# A real shop removes the installer and renames its back office's folder
+# afterwards (PrestaShop refuses to sign in at admin/); so does this one.
+# PrestaShop 9 does both itself, to a random name: the tests want a known one.
+rm -rf install
+for dir in admin*; do
+	case $dir in
+	admin-api | admin-dev) ;;
+	*) [ -f "$dir/index.php" ] && mv "$dir" admin-dev ;;
+	esac
+done
+rm -rf var/cache/*
+
+# The marketing and cloud modules PrestaShop installs by default call home,
+# and some warn on newer PHP: a test shop without them is quicker and
+# quieter. (None of them takes part in a Monero payment.)
+for module in ps_accounts ps_mbo ps_checkout ps_eventbus ps_facebook psxmarketingwithgoogle \
+	klaviyopsautomation ps_mcp_server ps_mcp_tools ps_ask_ai psshipping ps_distributionapiclient \
+	ps_onepagecheckout blockwishlist ps_googleanalytics; do
+	if [ -d "modules/$module" ]; then
+		runuser -u www-data -- php bin/console prestashop:module uninstall "$module" > /dev/null 2>&1 || echo "could not uninstall $module"
+		rm -rf "modules/$module"
+	fi
+done
+
+# No mail server here: PrestaShop sends no emails rather than failing to.
+sql "UPDATE ps_configuration SET value = '3' WHERE name = 'PS_MAIL_METHOD'"
+
+# The tests boot PrestaShop in-process as your own user: let them write its
+# caches, logs and images too (Apache's umask is 000 for the same reason).
+chmod -R a+rwX /var/www/html
+echo "PrestaShop installed at http://$SHOP_DOMAIN/"

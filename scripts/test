@@ -1,0 +1,87 @@
+#!/bin/sh
+# Runs the module's tests in the PrestaShop container (docker/compose.yaml),
+# as your own user so files it writes in the repository stay yours.
+#
+#   scripts/test up                 start PrestaShop and install it (PS_VERSION=9.2.0|8.2.8,
+#                                   PHP_VERSION=8.1…8.5; default 9.2.0 on 8.5)
+#   scripts/test install            build the zip and install it through the back office's module upload
+#   scripts/test unit|front|admin|http|smoke [phpunit args]
+#   scripts/test lint               PrestaShop's coding standard (fix: apply it)
+#   scripts/test all                install, then every suite but smoke
+#   scripts/test down               stop and remove the containers
+#
+# Coverage: COVERAGE=1 has each suite write coverage/raw/<suite>.cov (pcov)
+# and `all` merge them into coverage/summary.txt and coverage/html/. The
+# http suite runs the module inside Apache, so only the in-process suites
+# (unit, front, admin) count.
+set -eu
+cd "$(dirname "$0")/.."
+
+compose() {
+	docker compose -f docker/compose.yaml "$@"
+}
+
+run() {
+	# umask 0: files the tests make in the shop (its logs, caches) stay
+	# writable by Apache, as Apache's stay writable by the tests.
+	compose exec -T --user "$(id -u):$(id -g)" -e HOME=/tmp -e MONOKULO_URL="${MONOKULO_URL:-}" -e MONOKULO_SUITE="${MONOKULO_SUITE:-}" -w /repo prestashop sh -c 'umask 0000 && exec "$@"' sh "$@"
+}
+
+suite() {
+	name=$1
+	shift
+	if [ "${COVERAGE:-}" = 1 ]; then
+		mkdir -p coverage/raw
+		MONOKULO_SUITE=$name run php -d pcov.enabled=1 vendor/bin/phpunit --testsuite "$name" --coverage-php "coverage/raw/$name.cov" "$@"
+	else
+		MONOKULO_SUITE=$name run vendor/bin/phpunit --testsuite "$name" "$@"
+	fi
+}
+
+case "${1:-all}" in
+up)
+	compose up -d --build --wait
+	compose exec -T prestashop ps-setup
+	run composer install --no-interaction --no-progress
+	;;
+install)
+	run php scripts/build-zip
+	# Uninstalling deletes the module's files: never let it follow the
+	# development link into src/.
+	compose exec -T prestashop sh -c 'if [ -L /var/www/html/modules/monokulo ]; then rm /var/www/html/modules/monokulo && cp -a /repo/src /var/www/html/modules/monokulo && chown -R www-data:www-data /var/www/html/modules/monokulo; fi'
+	suite http --group installer
+	# From here on the shop runs src/ itself, so a change is live at once and
+	# coverage names src/ files.
+	compose exec -T prestashop sh -c 'rm -rf /var/www/html/modules/monokulo && ln -s /repo/src /var/www/html/modules/monokulo && rm -rf /var/www/html/var/cache/*'
+	;;
+down)
+	compose down -v
+	;;
+lint)
+	run env PHP_CS_FIXER_IGNORE_ENV=1 vendor/bin/php-cs-fixer fix --dry-run --diff
+	;;
+fix)
+	run env PHP_CS_FIXER_IGNORE_ENV=1 vendor/bin/php-cs-fixer fix
+	;;
+all)
+	"$0" install
+	rm -rf coverage
+	for name in unit front admin; do
+		suite "$name"
+	done
+	COVERAGE='' suite http --exclude-group installer
+	if [ "${COVERAGE:-}" = 1 ]; then
+		run vendor/bin/phpcov merge --text coverage/summary.txt --html coverage/html coverage/raw > /dev/null
+		cat coverage/summary.txt
+	fi
+	;;
+unit | front | admin | http | smoke)
+	name=$1
+	shift
+	suite "$name" "$@"
+	;;
+*)
+	echo "usage: scripts/test up|install|unit|front|admin|http|smoke|lint|fix|all|down" >&2
+	exit 2
+	;;
+esac

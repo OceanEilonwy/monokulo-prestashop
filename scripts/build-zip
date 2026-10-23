@@ -1,0 +1,64 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * Builds dist/monokulo.zip (and its .sha256) from src/, as PrestaShop's
+ * module manager takes it: one folder, monokulo/, named after the module
+ * (PrestaShop finds the module by that folder, whatever the file is called).
+ * The version is in the module class and in the release's name.
+ *
+ * Entries are sorted and dated 2026-01-01, so the same source always gives
+ * the same zip.
+ */
+$root = dirname(__DIR__);
+$src = $root . '/src';
+$dist = $root . '/dist';
+$zipPath = $dist . '/monokulo.zip';
+
+if (!is_dir($dist)) {
+    mkdir($dist);
+}
+@unlink($zipPath);
+
+$files = [];
+$dirs = [];
+$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($src, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
+foreach ($iterator as $file) {
+    $name = substr($file->getPathname(), strlen($src) + 1);
+    // The module list cache PrestaShop writes into a module's folder.
+    if (preg_match('/\Aconfig(_[a-z]+)?\.xml\z/', $name)) {
+        continue;
+    }
+    if ($file->isDir()) {
+        $dirs[] = $name;
+    } elseif ($file->isFile()) {
+        $files[] = $name;
+    }
+}
+sort($files, SORT_STRING);
+sort($dirs, SORT_STRING);
+
+$zip = new ZipArchive();
+if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::EXCL) !== true) {
+    fwrite(STDERR, "cannot create $zipPath\n");
+    exit(1);
+}
+$time = gmmktime(0, 0, 0, 1, 1, 2026);
+foreach (array_merge([''], $dirs) as $dir) {
+    $name = rtrim('monokulo/' . $dir, '/') . '/';
+    $zip->addEmptyDir($name);
+    $zip->setMtimeName($name, $time);
+    $zip->setExternalAttributesName($name, ZipArchive::OPSYS_UNIX, 040755 << 16);
+}
+foreach ($files as $file) {
+    $name = 'monokulo/' . $file;
+    $zip->addFile($src . '/' . $file, $name);
+    $zip->setMtimeName($name, $time);
+    $zip->setCompressionName($name, ZipArchive::CM_DEFLATE);
+    $zip->setExternalAttributesName($name, ZipArchive::OPSYS_UNIX, 0100644 << 16);
+}
+$zip->close();
+
+$hash = hash_file('sha256', $zipPath);
+file_put_contents($zipPath . '.sha256', $hash . "  monokulo.zip\n");
+printf("dist/monokulo.zip (%s, %d files): %s\n", trim((string) file_get_contents($root . '/VERSION')), count($files), $hash);

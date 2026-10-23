@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    The module's tests, in suites that run as separate PHPUnit processes
+    (scripts/test sets MONOKULO_SUITE, which tests/bootstrap.php reads):
+
+    - unit:     the framework-free library, no PrestaShop (runs anywhere)
+    - front:    the storefront side (checkout, payment link, webhooks, the
+                connect flow's return), inside the installed PrestaShop booted
+                in-process against its real database (in the shop container)
+    - admin:    the back office side (settings, starting to connect), the same
+                way, as the back office boots
+    - http:     real HTTP to the shop's Apache: the module upload, the
+                settings page, the connect flow, a checkout, webhooks (names
+                say over_http)
+    - smoke:    against a real Monokulo (MONOKULO_URL), optional
+
+    Deprecations, notices and warnings count only from the module's own
+    code: PrestaShop's and its other modules' are not this module's to fix.
+-->
+<phpunit
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+    bootstrap="tests/bootstrap.php"
+    colors="true"
+    cacheDirectory=".phpunit.cache"
+    executionOrder="defects"
+    failOnWarning="true"
+    failOnNotice="true"
+    failOnDeprecation="true"
+    failOnRisky="true"
+    beStrictAboutOutputDuringTests="true"
+    displayDetailsOnTestsThatTriggerDeprecations="true"
+    displayDetailsOnTestsThatTriggerWarnings="true"
+    displayDetailsOnTestsThatTriggerNotices="true"
+>
+    <testsuites>
+        <testsuite name="unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="front">
+            <directory>tests/Front</directory>
+        </testsuite>
+        <testsuite name="admin">
+            <directory>tests/Admin</directory>
+        </testsuite>
+        <testsuite name="http">
+            <directory>tests/Http</directory>
+        </testsuite>
+        <testsuite name="smoke">
+            <directory>tests/Smoke</directory>
+        </testsuite>
+    </testsuites>
+    <source restrictDeprecations="true" restrictNotices="true" restrictWarnings="true">
+        <include>
+            <directory suffix=".php">src</directory>
+        </include>
+    </source>
+</phpunit>
