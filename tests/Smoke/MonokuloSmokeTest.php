@@ -22,8 +22,9 @@ use PHPUnit\Framework\TestCase;
  * 4. a guest buys something with Monero: the shop places the order,
  *    makes the Monokulo order with the API entry's `create-order` form and
  *    sends them to the order's checkout, which loads; the order, read back
- *    through the API, is pending, and the merchant's link to it (its
- *    `mk:dashboard-order`) opens it on the dashboard;
+ *    through the API, is pending, and its `mk:dashboard-order` (the
+ *    merchant's link, which the shop takes from each of the order's
+ *    webhooks, so keeps none) opens it on the dashboard;
  * 5. a second guest's order is one request, from the entry the shop kept,
  *    and once the kept entry has expired the shop checks it with its ETag.
  *
@@ -77,10 +78,8 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertSame('GBP', $order['currency']);
 		$this->assertSame(Shop::rows('SELECT reference FROM ps_orders ORDER BY id_order DESC LIMIT 1')[0]['reference'], $order['merchant_order_id']);
 
-		// The merchant's link, kept with the order, opens it on their dashboard.
-		$dashboard = Shop::rows('SELECT dashboard FROM ps_monokulo_order ORDER BY seq DESC LIMIT 1')[0]['dashboard'];
-		$this->assertSame(Url::resolve($connection['api'], $order['_links']['mk:dashboard-order']['href']), $dashboard);
-		$merchantPage = $this->browser->get($dashboard);
+		// The merchant's link (which reaches the shop with each webhook) opens it on their dashboard.
+		$merchantPage = $this->browser->get(Url::resolve($connection['api'], $order['_links']['mk:dashboard-order']['href']));
 		$this->assertSame(200, $merchantPage->status);
 		$this->assertStringContainsString($order['merchant_order_id'], $merchantPage->text());
 

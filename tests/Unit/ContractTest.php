@@ -5,6 +5,7 @@ use Monokulo\PrestaShop\Logger;
 use Monokulo\PrestaShop\OrderRequest;
 use Monokulo\PrestaShop\Plugin;
 use Monokulo\PrestaShop\Tests\Support\Api;
+use Monokulo\PrestaShop\Tests\Support\Vectors;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -71,17 +72,44 @@ final class ContractTest extends TestCase {
 		$this->assertSame([], array_values(array_diff($entry['required'], array_keys($sent))));
 	}
 
-	/** The order links the module follows: the payer's page, its onion twin, and the merchant's page, all text/html pages Monokulo serves. */
+	/**
+	 * The order links the module follows: the payer's page, and its onion
+	 * twin only from a Monokulo with an onion address. Both text/html pages
+	 * Monokulo serves.
+	 */
 	public function test_an_order_links_the_pages_the_module_sends_people_to(): void {
 		$links = Api::order('order_1')['_links'];
-
 		$this->assertSame('/checkout/order_1', $links['mk:checkout']['href']);
 		$this->assertSame(Api::ONION . '/checkout/order_1', $links['mk:onion-checkout']['href']);
-		$this->assertMatchesRegularExpression('#\A/stores/[^/]+/orders/order_1\z#', $links['mk:dashboard-order']['href']);
-		foreach (['mk:checkout', 'mk:onion-checkout', 'mk:dashboard-order'] as $rel) {
+		foreach (['mk:checkout', 'mk:onion-checkout'] as $rel) {
 			$this->assertSame('text/html', $links[$rel]['type'], $rel);
 		}
+		$this->assertArrayNotHasKey('mk:onion-checkout', Api::order('order_1', onion: false)['_links'], 'no onion address, no onion checkout');
+		$this->assertSame('/checkout/order_1', Api::order('order_1', onion: false)['_links']['mk:checkout']['href']);
 		$this->assertArrayHasKey('text/html', Api::operation('get', '/checkout/{order_id}')['responses']['200']['content']);
+	}
+
+	/** The recordings tell one story: the order the secret key makes is the one it reads. */
+	public function test_the_order_made_is_the_order_read(): void {
+		foreach (['sk', 'sk-with-onion'] as $name) {
+			$made = Api::example('post', '/api/v1/orders', '201', $name);
+			$read = Api::example('get', '/api/v1/orders/{order_id}', '200', $name);
+			$this->assertSame($made['order_id'], $read['order_id'], $name);
+			$this->assertSame($made['_links'], $read['_links'], $name);
+		}
+	}
+
+	/**
+	 * The merchant's link to the order comes with its webhooks: every
+	 * published delivery links `mk:dashboard-order`, the dashboard page the
+	 * API gives the secret key (and not the public key), absolute.
+	 */
+	public function test_the_merchants_link_comes_with_every_webhook(): void {
+		$route = '#\Ahttps?://[^/]+/stores/[^/]+/orders/[^/]+\z#';
+		foreach (Vectors::deliveries() as $name => $delivery) {
+			$this->assertMatchesRegularExpression($route, json_decode($delivery['body'], true)['_links']['mk:dashboard-order']['href'], $name);
+		}
+		$this->assertSame('text/html', Api::order('order_1')['_links']['mk:dashboard-order']['type']);
 		$this->assertArrayHasKey('text/html', Api::operation('get', '/stores/{id}/orders/{order_id}')['responses']['200']['content']);
 		$this->assertArrayNotHasKey('mk:dashboard-order', Api::example('post', '/api/v1/orders', '201', 'pk')['_links'], 'the merchant\'s page is for the secret key only');
 	}
@@ -98,5 +126,8 @@ final class ContractTest extends TestCase {
 		$this->assertSame('/api/v1', Api::finished()['api']);
 		$this->assertSame(Api::ONION . '/api/v1', Api::finished()['onion_api']);
 		$this->assertSame(Api::ONION . '/api/v1', Api::entry()['_links']['mk:onion-api']['href'], 'the entry and the handshake agree');
+		$this->assertArrayNotHasKey('onion_api', Api::finished(onion: false), 'no onion address, no onion entry');
+		$this->assertArrayNotHasKey('mk:onion-api', Api::entry(onion: false)['_links']);
+		$this->assertSame(Api::finished()['secret_token'], Api::finished(onion: false)['secret_token'], 'one story: the same store either way');
 	}
 }

@@ -30,6 +30,10 @@ if (!defined('_PS_VERSION_')) {
  * - `order.expired`: the payment window closed without full payment.
  *   "Expired" status (Canceled by default), with a note that any
  *   funds received stay at the payment address.
+ * - `order.cancelled`: the merchant cancelled the order in Monokulo before
+ *   anything was paid (only Monokulo's POS cancels, and only its own
+ *   orders, so a shop order shouldn't see it). Handled as `order.expired`:
+ *   the "Expired" status, with a note.
  * - `order.double_spend_detected`, `order.double_spend_reversed`: a note
  *   only. If the order's status changes because of it, monokulo announces
  *   that as its own `order.<status>` event.
@@ -47,6 +51,7 @@ final class StatusPolicy
             'order.paid' => new Decision(Decision::STATUS_PAID, 'note_paid', notify: true, paid: true),
             'order.overpaid' => new Decision(Decision::STATUS_PAID, 'note_overpaid', notify: true, paid: true),
             'order.expired' => new Decision(Decision::STATUS_EXPIRED, 'note_expired'),
+            'order.cancelled' => new Decision(Decision::STATUS_EXPIRED, 'note_cancelled'),
             'order.double_spend_detected' => new Decision(null, 'note_double_spend_detected'),
             'order.double_spend_reversed' => new Decision(null, 'note_double_spend_reversed'),
             default => null,

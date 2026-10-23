@@ -51,12 +51,18 @@ Monokulo's [HTTP API](https://docs.monokulo.com/api/) (`/api/v1` on your
 Monokulo's address, under its path if it has one). From there the module
 follows the API's links and forms and builds no address itself: it makes
 each order with the entry's `create-order` form, sends the customer to the
-order's checkout link (`mk:checkout`), and keeps the order's page on your
-Monokulo dashboard (`mk:dashboard-order`) for its notes. It keeps the entry
+order's checkout link (`mk:checkout`), and links each order note to the
+order's page on your Monokulo dashboard (`mk:dashboard-order`, which comes
+with every webhook, so the module keeps none of its own). It keeps the entry
 for as long as Monokulo says (an hour), so making an order is usually one
 request, and reads it again when Monokulo refuses something from it.
 Monokulo's refusals are `application/problem+json`: the customer gets a
-plain message, and the module's log gets Monokulo's reason.
+plain message, and the module's log gets Monokulo's reason. When Monokulo
+has no exchange rate for the currency right now (`rates-unavailable`) or
+its payment engine is busy (`engine-unavailable`), no Monokulo order is
+made: the customer is asked to try again shortly, the order stays placed,
+and trying again (the payment link) sends the same request with the same
+idempotency key.
 
 ### Tor
 
@@ -74,8 +80,7 @@ shop's server itself always talks to Monokulo at the saved address.
 Connected shops keep working: there's no need to connect again. The
 Stores panel shows your Monokulo's onion address only once a shop has
 connected again (Tor customers are sent to the onion checkout either way,
-from each order's own link), and orders made before the upgrade get their
-*In Monokulo* link once the customer goes back to pay them.
+from each order's own link).
 
 Which countries, currencies and customer groups see Monero is up to
 PrestaShop's own **Payment > Preferences**, as for any payment module.
@@ -113,15 +118,17 @@ Each status is configurable under **Order statuses**; the defaults:
 | `order.paid` | Paid in full | **Paid**: Payment accepted (its email tells the customer) | Note |
 | `order.overpaid` | Paid with more than was due | **Paid**: Payment accepted | As paid, and that the excess isn't refunded automatically |
 | `order.expired` | The payment window closed without full payment | **Expired**: Canceled | Note: any funds received stay at the address |
+| `order.cancelled` | Cancelled in Monokulo before anything was paid (only its POS cancels, its own orders) | **Expired**: Canceled | Note: any funds received stay at the address |
 | `order.double_spend_detected` | A payment was double-spent and no longer counts | unchanged | Fraud alert (the status change, if any, comes as its own event) |
 | `order.double_spend_reversed` | That alert was wrong | unchanged | Note |
 
 *Awaiting Monero payment* is the module's own status, made when it is
 installed. The notes are private messages on the order, which only you see
-on the order's page in the back office; each links the order in your
-Monokulo dashboard (*In Monokulo*).
+on the order's page in the back office; each one from a webhook links the
+order in your Monokulo dashboard (*In Monokulo*), from that webhook's own
+links.
 
-A paid order stays paid: if Monokulo later reports it expired or part paid
+A paid order stays paid: if Monokulo later reports it expired, cancelled or part paid
 (after a double spend, say), the order keeps its status, and a note says
 so. An order whose total changed after a first payment request has more
 than one Monokulo order, and Monokulo keeps watching them all: a payment to
@@ -192,8 +199,7 @@ password `admin-password-1`.
 - **smoke**: a fresh Monokulo with an onion address
   (`docker/monokulo-smoke.toml`): sign up, add a watch-only wallet,
   connect, then a guest checkout lands on the Monokulo checkout, whose
-  status is pending, and the merchant's link opens the order on the
-  dashboard; the next orders use the kept API entry. Nothing is paid.
+  status is pending, and its dashboard link opens the order there; the next orders use the kept API entry. Nothing is paid.
 
 The test shop leaves out PrestaShop's marketing and cloud modules
 (`docker/ps-setup`), which call home and take no part in a payment.

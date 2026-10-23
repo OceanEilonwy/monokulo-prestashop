@@ -22,8 +22,7 @@ if (!defined('_PS_VERSION_')) {
  * - `monokulo_connection`: one row per shop host that has connected, with
  *   the API entry as last read for its key.
  * - `monokulo_order`: every Monokulo order the shop created, which
- *   PrestaShop order it pays, its page on the merchant's dashboard, and
- *   when it was paid. A PrestaShop order can
+ *   PrestaShop order it pays, and when it was paid. A PrestaShop order can
  *   have more than one when its total changed after a first attempt; the
  *   newest is the current one, and Monokulo keeps watching the others, so
  *   their webhooks are still recognised.
@@ -71,7 +70,6 @@ final class Repository implements EntryStore
                 `host` VARCHAR(255) NOT NULL,
                 `amount` VARCHAR(40) NOT NULL,
                 `currency` VARCHAR(8) NOT NULL,
-                `dashboard` VARCHAR(512) NOT NULL DEFAULT '',
                 `created_at` INT(11) NOT NULL,
                 `paid_at` INT(11) NULL DEFAULT NULL,
                 PRIMARY KEY (`monokulo_order_id`),
@@ -99,8 +97,7 @@ final class Repository implements EntryStore
      * Columns added since 0.2.0, the first version on Monokulo's HTTP API,
      * by table: a shop that upgrades keeps its connections and orders. A
      * connection made before 0.3.0 has no `onion_api` until it connects
-     * again, and an order made before it no dashboard link until the
-     * customer goes back to pay it.
+     * again.
      */
     private const ADDED = [
         'connection' => [
@@ -108,9 +105,6 @@ final class Repository implements EntryStore
             'entry' => 'MEDIUMTEXT NULL',
             'entry_etag' => "VARCHAR(255) NOT NULL DEFAULT ''",
             'entry_expires_at' => 'INT(11) NOT NULL DEFAULT 0',
-        ],
-        'order' => [
-            'dashboard' => "VARCHAR(512) NOT NULL DEFAULT '' AFTER `currency`",
         ],
     ];
 
@@ -204,36 +198,27 @@ final class Repository implements EntryStore
     }
 
     /**
-     * Remembers that `monokuloOrderId` pays PrestaShop order `orderId`, and
-     * its page on the merchant's dashboard (`dashboard`, '' when Monokulo
-     * gave none). True the first time, false when it was already known (a
-     * retried request got the same Monokulo order back).
+     * Remembers that `monokuloOrderId` pays PrestaShop order `orderId`. True
+     * the first time, false when it was already known (a retried request got
+     * the same Monokulo order back).
      */
-    public function recordOrder(string $monokuloOrderId, int $orderId, int $shopId, string $host, string $amount, string $currency, string $dashboard, int $now): bool
+    public function recordOrder(string $monokuloOrderId, int $orderId, int $shopId, string $host, string $amount, string $currency, int $now): bool
     {
         $this->db->execute(
-            'INSERT IGNORE INTO `' . $this->table('order') . '` (`monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency`, `dashboard`, `created_at`) VALUES ('
+            'INSERT IGNORE INTO `' . $this->table('order') . '` (`monokulo_order_id`, `id_order`, `id_shop`, `host`, `amount`, `currency`, `created_at`) VALUES ('
             . $this->db->quote($monokuloOrderId) . ', ' . $orderId . ', ' . $shopId . ', ' . $this->db->quote($host) . ', '
-            . $this->db->quote($amount) . ', ' . $this->db->quote($currency) . ', ' . $this->db->quote($dashboard) . ', ' . $now . ')'
-        );
-        if ($this->db->affected() === 1) {
-            return true;
-        }
-        // Made before 0.3.0, which didn't keep the link.
-        $this->db->execute(
-            'UPDATE `' . $this->table('order') . '` SET `dashboard` = ' . $this->db->quote($dashboard)
-            . ' WHERE `monokulo_order_id` = ' . $this->db->quote($monokuloOrderId) . " AND `dashboard` = ''"
+            . $this->db->quote($amount) . ', ' . $this->db->quote($currency) . ', ' . $now . ')'
         );
 
-        return false;
+        return $this->db->affected() === 1;
     }
 
     /**
      * The PrestaShop order a Monokulo order pays, whether it is that order's
      * newest (current) Monokulo order, and whether another of its Monokulo
-     * orders was paid already, and its page on the merchant's dashboard ('' when unknown).
+     * orders was paid already.
      *
-     * @return array{order_id: int, shop_id: int, host: string, dashboard: string, latest: bool, paid_elsewhere: bool}|null
+     * @return array{order_id: int, shop_id: int, host: string, latest: bool, paid_elsewhere: bool}|null
      */
     public function findOrder(string $monokuloOrderId): ?array
     {
@@ -250,7 +235,6 @@ final class Repository implements EntryStore
             'order_id' => (int) $row['id_order'],
             'shop_id' => (int) $row['id_shop'],
             'host' => $row['host'],
-            'dashboard' => $row['dashboard'],
             'latest' => $newest && $newest['monokulo_order_id'] === $row['monokulo_order_id'],
             'paid_elsewhere' => (bool) $this->db->row(
                 'SELECT `monokulo_order_id` FROM `' . $this->table('order') . '` WHERE `id_order` = ' . (int) $row['id_order']

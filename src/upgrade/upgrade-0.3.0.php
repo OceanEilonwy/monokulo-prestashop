@@ -12,10 +12,10 @@ if (!defined('_PS_VERSION_')) {
 }
 
 /**
- * 0.3.0 keeps the API entry between orders, each order's page on the
- * merchant's dashboard, and Monokulo's onion address. A shop on 0.2.0 keeps
- * its connection and orders (Repository::install adds the columns); its
- * connection learns the onion address when it connects again.
+ * 0.3.0 keeps the API entry between orders, and Monokulo's onion address.
+ * A shop on 0.2.0 keeps its connection and orders (Repository::install adds
+ * the columns); its connection learns the onion address when it connects
+ * again.
  *
  * @param Monokulo $module
  */
