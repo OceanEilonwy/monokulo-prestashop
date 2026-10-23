@@ -8,7 +8,8 @@ No spend key touches the shop or Monokulo.
 
 - PrestaShop **8.2** or **9** (tested on 8.2.8 with PHP 8.1, and on 9.2.0
   with PHP 8.2 and 8.5); PHP **8.1** or newer
-- A Monokulo whose operator has set its public address
+- A store on [monokulo.com](https://monokulo.com/), or on your own Monokulo
+  (its operator must have set its public address)
 - GPL-3.0-or-later
 
 ## Install
@@ -23,8 +24,8 @@ No spend key touches the shop or Monokulo.
 
 On the module's settings page:
 
-1. Enter your **Monokulo address**, as your browser opens it
-   (`https://pay.example.com`), and **Save**.
+1. Check the **Monokulo address**: `https://monokulo.com` (the default),
+   or your own Monokulo's address as your browser opens it. **Save**.
 2. Under **Stores**, press **Connect** next to your shop.
 3. Sign in to Monokulo (or sign up) in the page that opens. Monokulo finds
    your store by the shop's web address:

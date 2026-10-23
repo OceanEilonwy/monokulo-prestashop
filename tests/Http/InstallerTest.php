@@ -68,7 +68,7 @@ final class InstallerTest extends TestCase {
 		if ($awaiting !== null) {
 			$this->assertSame((int)$awaiting, $status, 'installing again finds its order status again');
 		}
-		$this->assertSame('', (string)Shop::setting('MONOKULO_ADDRESS'));
+		$this->assertSame('https://monokulo.com', (string)Shop::setting('MONOKULO_ADDRESS'));
 		$this->assertSame('0', Shop::setting('MONOKULO_FORWARD_ERRORS'));
 		foreach (['PENDING', 'WAITING', 'PARTIAL'] as $key) {
 			$this->assertSame((string)$status, Shop::setting('MONOKULO_OS_' . $key), $key);
