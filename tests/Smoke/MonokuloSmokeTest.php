@@ -24,7 +24,7 @@ use PHPUnit\Framework\TestCase;
  * Nothing is paid. Monokulo's pages are filled in by their fields' names.
  */
 final class MonokuloSmokeTest extends TestCase {
-	/** Monokulo's own test keys (crates/monokulo connect tests): a mainnet watch-only wallet. */
+	/** A mainnet watch-only wallet: a fixed view key and its public spend key, for tests only. */
 	private const VIEW_KEY = '0707070707070707070707070707070707070707070707070707070707070707';
 	private const SPEND_PUBLIC_KEY = '8621f587cfc4d6f869720476565ecd0972451ff7b8dada3498c9d3c2ca54fc90';
 	private const PASSWORD = 'correct horse battery staple';
