@@ -102,9 +102,15 @@ final class Shop {
 		return urldecode($m[1]);
 	}
 
-	/** The module's settings page. */
+	/**
+	 * The module's settings page, with `query` added: reached by its Symfony
+	 * address (PrestaShop 8 refuses the old one without a token), which
+	 * PrestaShop 8 sends on to the old one, without the query.
+	 */
 	public static function settingsPage(Browser $browser, array $query = []): Page {
-		return self::adminPage($browser, 'AdminModules', ['configure' => 'monokulo'] + $query);
+		$page = $browser->follow($browser->get(self::ADMIN . 'index.php/improve/modules/manage/action/configure/monokulo?_token=' . urlencode(self::routeToken($browser))));
+
+		return $query ? $browser->follow($browser->get($page->url . '&' . http_build_query($query))) : $page;
 	}
 
 	/**

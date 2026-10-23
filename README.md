@@ -101,9 +101,9 @@ the Monokulo checkout; it's on the order in your Monokulo dashboard.
 ## Webhooks
 
 Connecting registers the shop's webhook address with Monokulo:
-`https://<your shop>/module/monokulo/webhook` (or
-`index.php?fc=module&module=monokulo&controller=webhook` without friendly
-URLs). Each delivery is signed (`X-Monokulo-Signature`); the module refuses
+`https://<your shop>/index.php?fc=module&module=monokulo&controller=webhook`,
+PrestaShop's plain module address, which works whatever the shop's
+friendly URL and language settings are, now or later. Each delivery is signed (`X-Monokulo-Signature`); the module refuses
 a missing or wrong signature and one more than five minutes old. Monokulo
 retries a delivery the shop didn't take; a delivery seen before changes
 nothing. Deliveries and their answers are listed in Monokulo, in the store's

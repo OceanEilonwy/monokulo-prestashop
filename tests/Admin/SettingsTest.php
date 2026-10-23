@@ -69,10 +69,11 @@ final class SettingsTest extends ShopTestCase {
 		$nonce = $this->rows('SELECT * FROM `' . _DB_PREFIX_ . 'monokulo_connect_nonce`')[0];
 		$this->assertSame([
 			'site_url'   => 'http://localhost:8093/',
-			'return_url' => 'http://localhost:8093/module/monokulo/connect',
+			'return_url' => $query['return_url'],
 			'nonce'      => $nonce['nonce'],
 			'name'       => 'PrestaShop',
 		], $query);
+		$this->assertMatchesRegularExpression('#\Ahttp://localhost:8093/([a-z]{2}/)?module/monokulo/connect\z#', $query['return_url'], 'back to the shop itself');
 		$this->assertSame(self::HOST, $nonce['host']);
 		$this->assertSame('1', $nonce['id_shop']);
 		$this->assertSame(self::ADMIN, $nonce['admin_return']);
@@ -86,19 +87,20 @@ final class SettingsTest extends ShopTestCase {
 		parse_str((string)parse_url($this->module()->startConnect($shopId, self::ADMIN)['redirect'], PHP_URL_QUERY), $query);
 
 		$this->assertSame('http://127.0.0.1:8093/', $query['site_url']);
-		$this->assertSame('http://127.0.0.1:8093/module/monokulo/connect', $query['return_url']);
+		$this->assertMatchesRegularExpression('#\Ahttp://127\.0\.0\.1:8093/([a-z]{2}/)?module/monokulo/connect\z#', $query['return_url']);
 		$this->assertSame(self::SECOND_HOST, $this->rows('SELECT `host` FROM `' . _DB_PREFIX_ . 'monokulo_connect_nonce`')[0]['host']);
 	}
 
 	/** A shop with https on is connected by its https address. */
 	public function test_an_https_shop_connects_by_its_https_address(): void {
 		$this->setting('PS_SSL_ENABLED', '1');
+		$this->setting('PS_SSL_ENABLED_EVERYWHERE', '1'); // the back office turns both on
 		\Context::getContext()->link = new \Link(); // as the next request's would be
 
 		parse_str((string)parse_url($this->module()->startConnect(1, self::ADMIN)['redirect'], PHP_URL_QUERY), $query);
 
 		$this->assertSame('https://localhost:8093/', $query['site_url']);
-		$this->assertSame('https://localhost:8093/module/monokulo/connect', $query['return_url']);
+		$this->assertMatchesRegularExpression('#\Ahttps://localhost:8093/([a-z]{2}/)?module/monokulo/connect\z#', $query['return_url']);
 	}
 
 	public function test_connect_needs_an_address_and_a_real_shop(): void {

@@ -45,7 +45,7 @@ final class Storefront {
 		$page = self::checkout($browser);
 		// The payment step is the current one (PrestaShop 9's theme marks it
 		// step--current, 8's classic theme -current).
-		if (!preg_match('/id="checkout-payment-step"[^>]*class="[^"]*(step--current|-current)/', $page->body)) {
+		if (!preg_match('/<section[^>]*"checkout-payment-step"[^>]*>/', $page->body, $tag) || !preg_match('/(step--current|\s-current)\b/', $tag[0])) {
 			throw new \RuntimeException('the checkout did not reach its payment step: ' . substr($page->text(), 0, 1500));
 		}
 

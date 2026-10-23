@@ -50,6 +50,20 @@ final class PrestaShop {
 	}
 
 	/**
+	 * A new visitor's request to shop `shopId`: its shop and link, no
+	 * customer or cart yet, the shop's currency and language.
+	 */
+	public static function newRequest(int $shopId = 1): \Context {
+		$context = self::useShop($shopId);
+		$context->customer = new \Customer();
+		$context->cart = new \Cart();
+		$context->currency = new \Currency((int)\Configuration::get('PS_CURRENCY_DEFAULT'));
+		$context->language = new \Language((int)\Configuration::get('PS_LANG_DEFAULT'));
+
+		return $context;
+	}
+
+	/**
 	 * Makes `shopId` the current shop, as a request to its address would:
 	 * the context's shop, its link, and PrestaShop's shop context.
 	 */

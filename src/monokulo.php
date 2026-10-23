@@ -422,7 +422,7 @@ class Monokulo extends PaymentModule
     private function finishConnect(string $host, string $token): string
     {
         $address = (string) Configuration::getGlobalValue(self::ADDRESS);
-        $webhookUrl = $this->context->link->getModuleLink($this->name, 'webhook', [], null, null, (int) $this->context->shop->id);
+        $webhookUrl = $this->webhookUrl($this->context->shop);
 
         try {
             $credentials = $this->client()->finishConnect($address, $token, $webhookUrl);
@@ -440,6 +440,16 @@ class Monokulo extends PaymentModule
         $this->log()->info(sprintf('%s connected to Monokulo as %s.', $host, $credentials['public_key']));
 
         return 'monokulo_connected=1';
+    }
+
+    /**
+     * Where Monokulo sends a shop's webhooks: PrestaShop's plain module
+     * address, which reaches the module whatever the shop's friendly URL and
+     * language settings are, now or later.
+     */
+    public function webhookUrl(Shop $shop): string
+    {
+        return $this->shopUrl($shop) . 'index.php?' . http_build_query(['fc' => 'module', 'module' => $this->name, 'controller' => 'webhook']);
     }
 
     /* ------------------------------------------------------------------ */
@@ -541,7 +551,8 @@ class Monokulo extends PaymentModule
      */
     public function payLink(int $cartId, string $secureKey): string
     {
-        return $this->context->link->getModuleLink($this->name, 'pay', ['id_cart' => $cartId, 'key' => $secureKey], true);
+        // PrestaShop 8 writes the parameters for HTML (&amp;): this is a plain address.
+        return html_entity_decode($this->context->link->getModuleLink($this->name, 'pay', ['id_cart' => $cartId, 'key' => $secureKey], true), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     }
 
     /**
@@ -768,8 +779,9 @@ class Monokulo extends PaymentModule
     }
 
     /**
-     * The module's words, in the shop's language. Customer-facing ones are
-     * in Modules.Monokulo.Shop, the merchant's in Modules.Monokulo.Admin.
+     * The module's words, in the shop's language, with `params` (`%url%` =>
+     * …) put in. Customer-facing ones are in Modules.Monokulo.Shop, the
+     * merchant's in Modules.Monokulo.Admin.
      *
      * @param array<string, string> $params
      */
@@ -778,75 +790,80 @@ class Monokulo extends PaymentModule
         $shop = 'Modules.Monokulo.Shop';
         $admin = 'Modules.Monokulo.Admin';
 
-        return match ($key) {
+        $message = match ($key) {
             // Checkout and the customer's pages
-            'pay_with_monero' => $this->trans('Pay with Monero', $params, $shop),
-            'payment_name' => $this->trans('Monero (via Monokulo)', $params, $shop),
-            'checkout_description' => $this->trans('You pay on a secure Monokulo payment page next; the payment link is also in your order confirmation.', $params, $shop),
-            'mail_payment' => $this->trans('Monero (via Monokulo). Pay for your order here: %url%', $params, $shop),
-            'pay_order' => $this->trans('Your order %reference% is waiting for its Monero payment.', $params, $shop),
-            'order_description' => $this->trans('Order %reference%', $params, $shop),
-            'order_description_more' => $this->trans(' + %d more', $params, $shop),
-            'connect_failed' => $this->trans('This connect link has already been used or has expired. Start connecting again from the Monokulo module\'s settings in your PrestaShop back office.', $params, $shop),
-            'error_order' => $this->trans('This payment link is not valid. Please check the link in your order confirmation email.', $params, $shop),
-            'error_not_payable' => $this->trans('This order is not waiting for a payment.', $params, $shop),
-            'error_not_connected' => $this->trans('Monero payments are not set up for this store yet. Please contact the store owner.', $params, $shop),
-            'error_busy' => $this->trans('Monero payments are busy right now. Please wait a moment and try again.', $params, $shop),
-            'error_unavailable' => $this->trans('Monero payments are not available for this store right now. Please contact the store owner.', $params, $shop),
-            'error_generic' => $this->trans('The Monero payment could not be started. Please try again, or contact the store.', $params, $shop),
-            'error_unreachable' => $this->trans('The Monero payment service could not be reached. Please try again shortly.', $params, $shop),
-            'try_again' => $this->trans('Try again', $params, $shop),
-            'payment_problem' => $this->trans('Monero payment', $params, $shop),
+            'pay_with_monero' => $this->trans('Pay with Monero', [], $shop),
+            'payment_name' => $this->trans('Monero (via Monokulo)', [], $shop),
+            'checkout_description' => $this->trans('You pay on a secure Monokulo payment page next; the payment link is also in your order confirmation.', [], $shop),
+            'mail_payment' => $this->trans('Monero (via Monokulo). Pay for your order here: %url%', [], $shop),
+            'pay_order' => $this->trans('Your order %reference% is waiting for its Monero payment.', [], $shop),
+            'order_description' => $this->trans('Order %reference%', [], $shop),
+            'order_description_more' => $this->trans(' + %d more', [], $shop),
+            'connect_failed' => $this->trans('This connect link has already been used or has expired. Start connecting again from the Monokulo module\'s settings in your PrestaShop back office.', [], $shop),
+            'error_order' => $this->trans('This payment link is not valid. Please check the link in your order confirmation email.', [], $shop),
+            'error_not_payable' => $this->trans('This order is not waiting for a payment.', [], $shop),
+            'error_not_connected' => $this->trans('Monero payments are not set up for this store yet. Please contact the store owner.', [], $shop),
+            'error_busy' => $this->trans('Monero payments are busy right now. Please wait a moment and try again.', [], $shop),
+            'error_unavailable' => $this->trans('Monero payments are not available for this store right now. Please contact the store owner.', [], $shop),
+            'error_generic' => $this->trans('The Monero payment could not be started. Please try again, or contact the store.', [], $shop),
+            'error_unreachable' => $this->trans('The Monero payment service could not be reached. Please try again shortly.', [], $shop),
+            'try_again' => $this->trans('Try again', [], $shop),
+            'payment_problem' => $this->trans('Monero payment', [], $shop),
             // Order notes, for the merchant
-            'note_started' => $this->trans('Monokulo: the customer was sent to pay this order with Monero here: %url%', $params, $admin),
-            'note_waiting' => $this->trans('Monokulo: a payment was seen and is waiting for confirmations.', $params, $admin),
-            'note_partial' => $this->trans('Monokulo: part of the amount due has arrived. The order is not paid in full yet.', $params, $admin),
-            'note_paid' => $this->trans('Monokulo: paid in full.', $params, $admin),
-            'note_overpaid' => $this->trans('Monokulo: paid, with more than the amount due. The excess is not refunded automatically: refund it yourself if needed.', $params, $admin),
-            'note_expired' => $this->trans('Monokulo: the payment window closed without full payment. Any funds received stay at the payment address; refund them yourself if needed.', $params, $admin),
-            'note_double_spend_detected' => $this->trans('Monokulo: FRAUD ALERT. A payment to this order was double-spent and no longer counts (transaction %transaction%). If this changed the order status, that is a separate entry. Check this order before sending anything.', $params, $admin),
-            'note_double_spend_reversed' => $this->trans('Monokulo: the earlier double-spend alert for this order (transaction %transaction%) was wrong and is withdrawn. If this changed the order status, that is a separate entry.', $params, $admin),
-            'note_superseded' => $this->trans('Monokulo: an older payment request for this order was paid, after the order total changed. Check the amount received before treating this order as paid.', $params, $admin),
-            'note_kept_paid' => $this->trans('The order was already paid, so its status is left as it is: check it before doing anything else.', $params, $admin),
-            'note_unknown_transaction' => $this->trans('unknown', $params, $admin),
-            'see_in_monokulo' => $this->trans('In Monokulo: %url%', $params, $admin),
+            'note_started' => $this->trans('Monokulo: the customer was sent to pay this order with Monero here: %url%', [], $admin),
+            'note_waiting' => $this->trans('Monokulo: a payment was seen and is waiting for confirmations.', [], $admin),
+            'note_partial' => $this->trans('Monokulo: part of the amount due has arrived. The order is not paid in full yet.', [], $admin),
+            'note_paid' => $this->trans('Monokulo: paid in full.', [], $admin),
+            'note_overpaid' => $this->trans('Monokulo: paid, with more than the amount due. The excess is not refunded automatically: refund it yourself if needed.', [], $admin),
+            'note_expired' => $this->trans('Monokulo: the payment window closed without full payment. Any funds received stay at the payment address; refund them yourself if needed.', [], $admin),
+            'note_double_spend_detected' => $this->trans('Monokulo: FRAUD ALERT. A payment to this order was double-spent and no longer counts (transaction %transaction%). If this changed the order status, that is a separate entry. Check this order before sending anything.', [], $admin),
+            'note_double_spend_reversed' => $this->trans('Monokulo: the earlier double-spend alert for this order (transaction %transaction%) was wrong and is withdrawn. If this changed the order status, that is a separate entry.', [], $admin),
+            'note_superseded' => $this->trans('Monokulo: an older payment request for this order was paid, after the order total changed. Check the amount received before treating this order as paid.', [], $admin),
+            'note_kept_paid' => $this->trans('The order was already paid, so its status is left as it is: check it before doing anything else.', [], $admin),
+            'note_unknown_transaction' => $this->trans('unknown', [], $admin),
+            'see_in_monokulo' => $this->trans('In Monokulo: %url%', [], $admin),
             // Settings
-            'settings' => $this->trans('Monokulo settings', $params, $admin),
-            'settings_saved' => $this->trans('The Monokulo settings are saved.', $params, $admin),
-            'address' => $this->trans('Monokulo address', $params, $admin),
-            'address_help' => $this->trans('Your Monokulo\'s public address, as your browser opens it (https://pay.example.com).', $params, $admin),
-            'forward_errors' => $this->trans('Send errors to Monokulo', $params, $admin),
-            'forward_errors_help' => $this->trans('Also sends this module\'s warnings and errors to your Monokulo, when the store there accepts client logs. They are always written to var/logs/monokulo.log, and to Advanced Parameters > Logs.', $params, $admin),
-            'statuses' => $this->trans('Order statuses', $params, $admin),
-            'statuses_help' => $this->trans('Where an order goes as its Monero payment progresses. Monokulo announces each change; PrestaShop then does what it does on any status change (its email, the invoice, stock).', $params, $admin),
-            'status_pending' => $this->trans('Order placed', $params, $admin),
-            'status_pending_help' => $this->trans('When the customer is sent to pay. The payment link is in the order confirmation email.', $params, $admin),
-            'status_waiting' => $this->trans('Payment seen', $params, $admin),
-            'status_waiting_help' => $this->trans('A payment is on its way and waiting for confirmations.', $params, $admin),
-            'status_partial' => $this->trans('Part paid', $params, $admin),
-            'status_partial_help' => $this->trans('Less than the amount due has arrived so far.', $params, $admin),
-            'status_paid' => $this->trans('Paid', $params, $admin),
-            'status_paid_help' => $this->trans('Paid in full (or more). This status\'s email tells the customer.', $params, $admin),
-            'status_expired' => $this->trans('Expired', $params, $admin),
-            'status_expired_help' => $this->trans('The payment window closed without full payment.', $params, $admin),
-            'stores' => $this->trans('Stores', $params, $admin),
-            'stores_help' => $this->trans('Each shop connects to a store in your Monokulo, found by the shop\'s web address. Shops that share an address share one connection.', $params, $admin),
-            'connected_as' => $this->trans('Connected as %key% since %date%', $params, $admin),
-            'not_connected' => $this->trans('Not connected', $params, $admin),
-            'reconnect_needed' => $this->trans('Connect again: this shop was connected by an older version of this module, and Monero is hidden at checkout until it is.', $params, $admin),
-            'address_first' => $this->trans('Save your Monokulo address first.', $params, $admin),
-            'connected' => $this->trans('Your store is connected. Monero is now offered at checkout.', $params, $admin),
-            'connect' => $this->trans('Connect', $params, $admin),
-            'reconnect' => $this->trans('Connect again', $params, $admin),
-            'error_permission' => $this->trans('You do not have permission to change the Monokulo settings.', $params, $admin),
-            'error_address' => $this->trans('Enter an http or https address, such as https://pay.example.com.', $params, $admin),
-            'error_status' => $this->trans('Choose an order status.', $params, $admin),
-            'error_connect_address' => $this->trans('Save your Monokulo address before connecting.', $params, $admin),
-            'error_connect_permission' => $this->trans('You do not have permission to connect shops.', $params, $admin),
-            'error_connect_host' => $this->trans('The connect flow came back to a different shop than it started from. Please connect again from this page.', $params, $admin),
-            'error_connect_finish' => $this->trans('Monokulo did not hand over the store\'s keys. Please connect again; the log says why.', $params, $admin),
-            'error_connect_unavailable' => $this->trans('Your Monokulo cannot connect shops yet: its operator has not set its public address.', $params, $admin),
-            'error_connect_unreachable' => $this->trans('Your Monokulo could not be reached from this shop\'s server. Check the address, then connect again.', $params, $admin),
+            'settings' => $this->trans('Monokulo settings', [], $admin),
+            'settings_saved' => $this->trans('The Monokulo settings are saved.', [], $admin),
+            'address' => $this->trans('Monokulo address', [], $admin),
+            'address_help' => $this->trans('Your Monokulo\'s public address, as your browser opens it (https://pay.example.com).', [], $admin),
+            'forward_errors' => $this->trans('Send errors to Monokulo', [], $admin),
+            'forward_errors_help' => $this->trans('Also sends this module\'s warnings and errors to your Monokulo, when the store there accepts client logs. They are always written to var/logs/monokulo.log, and to Advanced Parameters > Logs.', [], $admin),
+            'statuses' => $this->trans('Order statuses', [], $admin),
+            'statuses_help' => $this->trans('Where an order goes as its Monero payment progresses. Monokulo announces each change; PrestaShop then does what it does on any status change (its email, the invoice, stock).', [], $admin),
+            'status_pending' => $this->trans('Order placed', [], $admin),
+            'status_pending_help' => $this->trans('When the customer is sent to pay. The payment link is in the order confirmation email.', [], $admin),
+            'status_waiting' => $this->trans('Payment seen', [], $admin),
+            'status_waiting_help' => $this->trans('A payment is on its way and waiting for confirmations.', [], $admin),
+            'status_partial' => $this->trans('Part paid', [], $admin),
+            'status_partial_help' => $this->trans('Less than the amount due has arrived so far.', [], $admin),
+            'status_paid' => $this->trans('Paid', [], $admin),
+            'status_paid_help' => $this->trans('Paid in full (or more). This status\'s email tells the customer.', [], $admin),
+            'status_expired' => $this->trans('Expired', [], $admin),
+            'status_expired_help' => $this->trans('The payment window closed without full payment.', [], $admin),
+            'stores' => $this->trans('Stores', [], $admin),
+            'stores_help' => $this->trans('Each shop connects to a store in your Monokulo, found by the shop\'s web address. Shops that share an address share one connection.', [], $admin),
+            'connected_as' => $this->trans('Connected as %key% since %date%', [], $admin),
+            'not_connected' => $this->trans('Not connected', [], $admin),
+            'reconnect_needed' => $this->trans('Connect again: this shop was connected by an older version of this module, and Monero is hidden at checkout until it is.', [], $admin),
+            'address_first' => $this->trans('Save your Monokulo address first.', [], $admin),
+            'connected' => $this->trans('Your store is connected. Monero is now offered at checkout.', [], $admin),
+            'connect' => $this->trans('Connect', [], $admin),
+            'reconnect' => $this->trans('Connect again', [], $admin),
+            'error_permission' => $this->trans('You do not have permission to change the Monokulo settings.', [], $admin),
+            'error_address' => $this->trans('Enter an http or https address, such as https://pay.example.com.', [], $admin),
+            'error_status' => $this->trans('Choose an order status.', [], $admin),
+            'error_connect_address' => $this->trans('Save your Monokulo address before connecting.', [], $admin),
+            'error_connect_permission' => $this->trans('You do not have permission to connect shops.', [], $admin),
+            'error_connect_host' => $this->trans('The connect flow came back to a different shop than it started from. Please connect again from this page.', [], $admin),
+            'error_connect_finish' => $this->trans('Monokulo did not hand over the store\'s keys. Please connect again; the log says why.', [], $admin),
+            'error_connect_unavailable' => $this->trans('Your Monokulo cannot connect shops yet: its operator has not set its public address.', [], $admin),
+            'error_connect_unreachable' => $this->trans('Your Monokulo could not be reached from this shop\'s server. Check the address, then connect again.', [], $admin),
         };
+
+        // The values go in here, not through trans(): PrestaShop 8 escapes them
+        // for HTML (&amp;), and these words also go into emails, order messages
+        // and links.
+        return strtr($message, $params);
     }
 }

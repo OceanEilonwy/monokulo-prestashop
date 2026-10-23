@@ -42,11 +42,7 @@ abstract class ShopTestCase extends TestCase {
 		foreach (\Monokulo::STATUSES as $key => $default) {
 			$this->setting('MONOKULO_OS_' . strtoupper($key), (string)($default === null ? $awaiting : \Configuration::getGlobalValue($default)));
 		}
-		$context = PrestaShop::useShop(1);
-		$context->customer = new \Customer();
-		$context->cart = new \Cart();
-		$context->currency = new \Currency((int)\Configuration::get('PS_CURRENCY_DEFAULT'));
-		$context->language = new \Language((int)\Configuration::get('PS_LANG_DEFAULT'));
+		PrestaShop::newRequest();
 	}
 
 	protected function tearDown(): void {

@@ -51,7 +51,7 @@ final class SettingsOverHttpTest extends TestCase {
 		$this->assertStringContainsString('value="' . $this->monokulo->url . '"', $page->body);
 		$this->assertStringContainsString('Connected as pk_test since', $text);
 		$this->assertStringContainsString('http://localhost:8093/', $text);
-		$this->assertMatchesRegularExpression('/href="[^"]*configure\/monokulo[^"]*monokulo_connect=1"/', $page->body);
+		$this->assertMatchesRegularExpression('/href="[^"]*configure(\/|=)monokulo[^"]*monokulo_connect=1"/', $page->body);
 		$this->assertStringContainsString('Connect again', $text);
 		foreach (['Order placed', 'Payment seen', 'Part paid', 'Paid', 'Expired', 'Send errors to Monokulo', 'Stores'] as $label) {
 			$this->assertStringContainsString($label, $text);
@@ -85,7 +85,7 @@ final class SettingsOverHttpTest extends TestCase {
 		$page = Shop::settingsPage($this->browser);
 		$bankWire = (string)Shop::setting('PS_OS_BANKWIRE');
 
-		$saved = $this->browser->submit($page, 'configure/monokulo', [
+		$saved = $this->browser->submitWith($page, 'MONOKULO_ADDRESS', [
 			'MONOKULO_ADDRESS'        => '  https://pay.example.com/ ',
 			'MONOKULO_FORWARD_ERRORS' => '1',
 			'MONOKULO_OS_PAID'        => $bankWire,
@@ -101,7 +101,7 @@ final class SettingsOverHttpTest extends TestCase {
 	public function test_over_http_saving_refuses_a_bad_address(): void {
 		$page = Shop::settingsPage($this->browser);
 
-		$saved = $this->browser->submit($page, 'configure/monokulo', ['MONOKULO_ADDRESS' => 'pay.example.com', 'MONOKULO_FORWARD_ERRORS' => '1', 'submitMonokulo' => '1']);
+		$saved = $this->browser->submitWith($page, 'MONOKULO_ADDRESS', ['MONOKULO_ADDRESS' => 'pay.example.com', 'MONOKULO_FORWARD_ERRORS' => '1', 'submitMonokulo' => '1']);
 
 		$this->assertStringContainsString('Enter an http or https address, such as https://pay.example.com.', $saved->text());
 		$this->assertSame($this->monokulo->url, Shop::setting('MONOKULO_ADDRESS'), 'nothing saved');
@@ -120,7 +120,7 @@ final class SettingsOverHttpTest extends TestCase {
 		parse_str((string)parse_url($location, PHP_URL_QUERY), $query);
 		$this->assertSame('PrestaShop', $query['name']);
 		$this->assertSame(Shop::URL, $query['site_url']);
-		$this->assertSame(Shop::URL . 'module/monokulo/connect', $query['return_url']);
+		$this->assertMatchesRegularExpression('#\A' . preg_quote(Shop::URL, '#') . '([a-z]{2}/)?module/monokulo/connect\z#', $query['return_url']);
 
 		// Monokulo sends the browser back to return_url with its token.
 		$this->monokulo->respond('POST', '/plugins/connect/prestashop/finish', 200, ['public_key' => 'pk_http', 'secret_token' => 'sk_http', 'endpoint' => $this->monokulo->url, 'webhook_signing_secret' => 'whsec_http']);
@@ -129,7 +129,7 @@ final class SettingsOverHttpTest extends TestCase {
 		$this->assertSame(302, $back->status);
 		$this->assertStringContainsString('monokulo_connected=1', (string)$back->location());
 		$this->assertSame('pk_http', Shop::rows("SELECT public_key FROM ps_monokulo_connection WHERE host = 'localhost:8093'")[0]['public_key']);
-		$this->assertSame(Shop::URL . 'module/monokulo/webhook', json_decode($this->monokulo->requests()[0]['body'], true)['webhook_url']);
+		$this->assertSame(Shop::URL . 'index.php?fc=module&module=monokulo&controller=webhook', json_decode($this->monokulo->requests()[0]['body'], true)['webhook_url']);
 		$this->assertStringContainsString('Your store is connected', $this->browser->follow($back)->text());
 
 		// The same return again: the nonce is spent.
