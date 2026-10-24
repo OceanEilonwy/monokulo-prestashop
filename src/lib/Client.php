@@ -141,20 +141,29 @@ final class Client
     /**
      * The shop's warnings and errors, for the merchant to read in Monokulo,
      * with the entry's `send-logs` form. Best effort: nothing is sent when
-     * the entry doesn't offer the form, and a failure here is ignored.
+     * the entry doesn't offer the form, and a failure is returned, not
+     * thrown (Monokulo's refusal, for the merchant's log; an unreachable
+     * Monokulo was logged already, by what failed).
      *
      * @param list<array{level: string, message: string, trace_id: string}> $entries
      */
-    public function forwardLogs(Connection $connection, array $entries): void
+    public function forwardLogs(Connection $connection, array $entries): ApiError|TransportError|null
     {
         if (!$entries) {
-            return;
+            return null;
         }
         try {
-            $this->submit($connection, 'send-logs', ['entries' => $entries], 3);
-        } catch (ApiError|TransportError) {
-            // Nothing to do: these are reports about other failures.
+            [, $response] = $this->submit($connection, 'send-logs', ['entries' => $entries], 3);
+            if ($response->status < 200 || $response->status >= 300) {
+                $this->decode($response, 204); // throws Monokulo's refusal
+            }
+        } catch (ApiError $e) {
+            return $e->status === 0 ? null : $e; // 0: the entry offers no send-logs form
+        } catch (TransportError $e) {
+            return $e;
         }
+
+        return null;
     }
 
     /**

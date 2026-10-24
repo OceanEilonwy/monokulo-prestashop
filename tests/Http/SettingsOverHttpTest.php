@@ -80,6 +80,7 @@ final class SettingsOverHttpTest extends TestCase {
 	public function test_over_http_the_page_says_how_connecting_went(): void {
 		$this->assertStringContainsString('Your store is connected. Monero is now offered at checkout.', Shop::settingsPage($this->browser, ['monokulo_connected' => '1'])->text());
 		$this->assertStringContainsString('has not set its public address', Shop::settingsPage($this->browser, ['monokulo_connect_error' => 'unavailable'])->text());
+		$this->assertStringContainsString('too many connect attempts from this shop. Wait a minute, then connect again.', Shop::settingsPage($this->browser, ['monokulo_connect_error' => 'busy'])->text());
 		$this->assertStringNotContainsString('script>alert', Shop::settingsPage($this->browser, ['monokulo_connect_error' => '<script>alert(1)</script>'])->body);
 	}
 

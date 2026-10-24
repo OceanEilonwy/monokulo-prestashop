@@ -259,6 +259,13 @@ final class CheckoutTest extends ShopTestCase {
 			'not priced'    => [400, Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount'), 'This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', 'HTTP 400: ' . Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount')['detail'] . ' (Monokulo cannot price this order'],
 			'no rate'       => [503, Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable'), 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: ' . Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable')['detail'] . ' (Monokulo has no exchange rate for this currency right now'],
 			'engine busy'   => [503, Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable'), 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: ' . Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable')['detail'] . ' (Monokulo\'s payment engine is unavailable right now. No Monokulo order was made'],
+			'store unavailable' => [503, Api::recordedProblem('post', '/api/v1/orders', 'store-unavailable'), 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: ' . Api::recordedProblem('post', '/api/v1/orders', 'store-unavailable')['detail'] . ' (Monokulo could not read this store\'s settings, its embed policy among them: its database did not answer. No Monokulo order was made; the customer was asked to try again shortly. If it keeps happening, your Monokulo\'s operator should check its logs and database)'],
+			'challenge'     => [429, Api::recordedProblem('post', '/api/v1/orders', 'challenge-required'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: ' . Api::recordedProblem('post', '/api/v1/orders', 'challenge-required')['detail'] . ' (Monokulo asked for a browser\'s challenge'],
+			'conflict'      => [409, Api::recordedProblem('post', '/api/v1/orders', 'idempotency-conflict'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 409: ' . Api::recordedProblem('post', '/api/v1/orders', 'idempotency-conflict')['detail'] . ' (Monokulo already has an order made with this order\'s idempotency key'],
+			'invalid'       => [400, Api::recordedProblem('post', '/api/v1/orders', 'invalid-request'), 'The Monero payment could not be started. Please try again, or contact the store.', ' (Monokulo refused the module\'s order request: update the module'],
+			'too large'     => [413, Api::recordedProblem('post', '/api/v1/orders', 'too-large'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 413: ' . Api::recordedProblem('post', '/api/v1/orders', 'too-large')['detail'] . ' (the order request is larger than Monokulo takes'],
+			'not JSON'      => [415, Api::recordedProblem('post', '/api/v1/orders', 'unsupported-media-type'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 415: ' . Api::recordedProblem('post', '/api/v1/orders', 'unsupported-media-type')['detail'] . ' (Monokulo did not receive the order request as JSON'],
+			'internal'      => [500, Api::recordedProblem('post', '/api/v1/orders', 'internal'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: ' . Api::recordedProblem('post', '/api/v1/orders', 'internal')['detail'] . ' (something went wrong on your Monokulo'],
 			'anything else' => [500, 'oops', 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: oops'],
 		];
 	}
@@ -417,6 +424,27 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame('error', $entries[0]['level']);
 		$this->assertStringContainsString('HTTP 429: ' . $slowDown['detail'], $entries[0]['message']);
 		$this->assertSame(substr($requests[0]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
+	}
+
+	/**
+	 * Monokulo refuses the errors sent to it (client logs are off for the
+	 * store): the merchant's log says so and how to fix it, and the
+	 * customer is told only about their payment.
+	 */
+	public function test_a_refused_error_report_is_logged_for_the_merchant(): void {
+		$this->connect();
+		$this->setting(\Monokulo::FORWARD_ERRORS, '1');
+		$this->monokuloAnswers('', 429, Api::recordedProblem('post', '/api/v1/orders', 'rate-limited'));
+		$logsOff = Api::recordedProblem('post', '/api/v1/logs', 'logs-off');
+		self::$monokulo->respond('POST', '/api/v1/logs', 403, $logsOff, headers: ['Content-Type' => 'application/problem+json']);
+		$before = $this->logSize();
+
+		$answer = $this->pay($this->cart());
+
+		$this->assertSame('Monero payments are busy right now. Please wait a moment and try again.', $answer['error']);
+		$paths = array_column(self::$monokulo->requests(), 'path');
+		$this->assertSame('/api/v1/logs', end($paths), 'the errors were sent');
+		$this->assertStringContainsString('WARNING Sending the module\'s errors to Monokulo failed: HTTP 403: ' . $logsOff['detail'] . ' (client logs are off for this store: turn them on in the store\'s settings in Monokulo, or turn off sending errors to Monokulo in the module settings)', $this->logSince($before));
 	}
 
 	/** On the order confirmation page and the order in the customer's account: back to the payment while unpaid. */
