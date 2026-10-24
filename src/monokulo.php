@@ -62,7 +62,7 @@ class Monokulo extends PaymentModule
 
     public const LOG_FILE = 'monokulo.log';
 
-    private const CONNECT_ERRORS = ['permission', 'address', 'host', 'finish', 'unavailable', 'unreachable'];
+    private const CONNECT_ERRORS = ['permission', 'address', 'host', 'finish', 'unavailable', 'busy', 'unreachable'];
 
     private ?Trace $trace = null;
     private ?Logger $logger = null;
@@ -426,9 +426,13 @@ class Monokulo extends PaymentModule
         try {
             $credentials = $this->client()->finishConnect($address, $token, $webhookUrl);
         } catch (ApiError $e) {
-            $this->log()->error(sprintf('Connect finish at %s failed: HTTP %d: %s', $address, $e->status, $e->detail));
+            $this->log()->error(sprintf('Connect finish at %s failed: HTTP %d: %s%s', $address, $e->status, $e->detail, $e->connectHint()));
 
-            return $e->status === 503 ? 'monokulo_connect_error=unavailable' : 'monokulo_connect_error=finish';
+            return 'monokulo_connect_error=' . match ($e->status) {
+                503 => 'unavailable',
+                429 => 'busy',
+                default => 'finish',
+            };
         } catch (TransportError $e) {
             $this->log()->error(sprintf('Connect finish at %s failed: could not reach it: %s', $address, $e->getMessage()));
 
@@ -805,8 +809,13 @@ class Monokulo extends PaymentModule
     /** Sends this request's warnings and errors to Monokulo, when the merchant turned that on. */
     private function forward(?Connection $connection): void
     {
-        if ($this->logger && $connection && Configuration::getGlobalValue(self::FORWARD_ERRORS)) {
-            $this->client()->forwardLogs($connection, $this->logger->forwardable());
+        if (!$this->logger || !$connection || !Configuration::getGlobalValue(self::FORWARD_ERRORS)) {
+            return;
+        }
+        // Written after the errors were sent, so it waits for the next ones.
+        $failed = $this->client()->forwardLogs($connection, $this->logger->forwardable());
+        if ($failed instanceof ApiError) {
+            $this->log()->warning(sprintf('Sending the module\'s errors to Monokulo failed: HTTP %d: %s%s', $failed->status, $failed->detail, $failed->logsHint()));
         }
     }
 
@@ -895,6 +904,7 @@ class Monokulo extends PaymentModule
             'error_connect_host' => $this->trans('The connect flow came back to a different shop than it started from. Please connect again from this page.', [], $admin),
             'error_connect_finish' => $this->trans('Monokulo did not hand over the store\'s keys. Please connect again; the log says why.', [], $admin),
             'error_connect_unavailable' => $this->trans('Your Monokulo cannot connect shops yet: its operator has not set its public address.', [], $admin),
+            'error_connect_busy' => $this->trans('Your Monokulo is receiving too many connect attempts from this shop. Wait a minute, then connect again.', [], $admin),
             'error_connect_unreachable' => $this->trans('Your Monokulo could not be reached from this shop\'s server. Check the address, then connect again.', [], $admin),
         };
 

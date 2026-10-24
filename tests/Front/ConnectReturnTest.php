@@ -158,6 +158,9 @@ final class ConnectReturnTest extends ShopTestCase {
 			'no public address yet' => [503, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'no-public-address'), 'unavailable'],
 			'token refused'         => [401, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'invalid-connect-code'), 'finish'],
 			'body refused'          => [400, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'invalid-request'), 'finish'],
+			'too many attempts'     => [429, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'rate-limited'), 'busy'],
+			'not a plugin here'     => [404, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'not-found'), 'finish'],
+			'Monokulo broke'        => [500, Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'internal'), 'finish'],
 			'missing secret'        => [200, array_diff_key(Api::finished(), ['webhook_signing_secret' => 1]), 'finish'],
 			'no API entry'          => [200, array_diff_key(Api::finished(), ['api' => 1]), 'finish'],
 		];
@@ -171,6 +174,17 @@ final class ConnectReturnTest extends ShopTestCase {
 
 		$this->assertSame(['redirect' => self::ADMIN . '&monokulo_connect_error=' . $error], $answer);
 		$this->assertNull($this->repository()->connection(self::HOST));
+	}
+
+	/** Too many connect attempts: the admin is asked to wait, and the log says how long Monokulo asked. */
+	public function test_too_many_connect_attempts_say_how_long_to_wait(): void {
+		$problem = Api::recordedProblem('post', '/plugins/connect/{slug}/finish', 'rate-limited');
+		$this->monokuloFinishes(429, $problem);
+		$before = $this->logSize();
+
+		$this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
+
+		$this->assertStringContainsString('HTTP 429: ' . $problem['detail'] . ' (too many connect attempts from this shop: wait ' . $problem['retry_after'] . ' seconds, then connect again)', $this->logSince($before));
 	}
 
 	public function test_an_unreachable_monokulo_is_reported(): void {

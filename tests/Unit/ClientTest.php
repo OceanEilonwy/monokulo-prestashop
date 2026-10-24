@@ -337,6 +337,10 @@ final class ClientTest extends TestCase {
 			'rate limited'  => [429, Api::recordedProblem('post', '/api/v1/orders', 'rate-limited'), Api::recordedProblem('post', '/api/v1/orders', 'rate-limited')['detail'], 'error_busy'],
 			'no rate'       => [503, Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable'), Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable')['detail'], 'error_try_again'],
 			'engine busy'   => [503, Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable'), Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable')['detail'], 'error_try_again'],
+			'store unavailable' => [503, Api::recordedProblem('post', '/api/v1/orders', 'store-unavailable'), Api::recordedProblem('post', '/api/v1/orders', 'store-unavailable')['detail'], 'error_try_again'],
+			'challenge'     => [429, Api::recordedProblem('post', '/api/v1/orders', 'challenge-required'), Api::recordedProblem('post', '/api/v1/orders', 'challenge-required')['detail'], 'error_busy'],
+			'too large'     => [413, Api::recordedProblem('post', '/api/v1/orders', 'too-large'), Api::recordedProblem('post', '/api/v1/orders', 'too-large')['detail'], 'error_generic'],
+			'not JSON'      => [415, Api::recordedProblem('post', '/api/v1/orders', 'unsupported-media-type'), Api::recordedProblem('post', '/api/v1/orders', 'unsupported-media-type')['detail'], 'error_generic'],
 			'503, no problem' => [503, 'Service Unavailable', 'Service Unavailable', 'error_try_again'],
 			'forbidden'     => [403, Api::recordedProblem('post', '/api/v1/orders', 'forbidden'), Api::recordedProblem('post', '/api/v1/orders', 'forbidden')['detail'], 'error_unavailable'],
 			'not priced'    => [400, Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount'), Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount')['detail'], 'error_currency'],
@@ -430,7 +434,54 @@ final class ClientTest extends TestCase {
 		$this->assertStringContainsString('rate limited', (new ApiError(429, ''))->merchantHint());
 		$this->assertStringContainsString('exchange rate', (new ApiError(400, '', 'https://docs.monokulo.com/problems/invalid-amount'))->merchantHint());
 		$this->assertSame('invalid-amount', (new ApiError(400, '', 'https://docs.monokulo.com/problems/invalid-amount'))->problemName());
-		$this->assertSame('', (new ApiError(500, ''))->merchantHint());
+		$this->assertStringContainsString('Monokulo\'s logs', (new ApiError(500, ''))->merchantHint());
+		$this->assertSame('', (new ApiError(418, ''))->merchantHint());
+		$this->assertSame('', (new ApiError(418, ''))->connectHint());
+		$this->assertSame('', (new ApiError(418, ''))->logsHint());
+	}
+
+	/** @return array<string, array{string, string, string}> each recorded problem of the routes the module calls: route, problem, hint method */
+	public static function listedProblems(): array {
+		$routes = [['post', '/api/v1/orders', 'merchantHint'], ['get', '/api/v1', 'merchantHint'], ['post', '/plugins/connect/{slug}/finish', 'connectHint'], ['post', '/api/v1/logs', 'logsHint']];
+		$out = [];
+		foreach ($routes as [$method, $path, $hint]) {
+			foreach (Api::operation($method, $path)['responses'] as $answer) {
+				foreach (array_keys($answer['content']['application/problem+json']['examples'] ?? []) as $name) {
+					$out["$method $path $name"] = [$method, $path, (string)$name, $hint];
+				}
+			}
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Every problem Monokulo lists for a route the module calls tells the
+	 * merchant what happened and what to do, from its recorded example.
+	 */
+	#[DataProvider('listedProblems')]
+	public function test_every_listed_problem_has_a_hint_for_the_merchant(string $method, string $path, string $name, string $hint): void {
+		$problem = Api::recordedProblem($method, $path, $name);
+		$error = new ApiError($problem['status'], $problem['detail'] ?? '', $problem['type'], $problem['retry_after'] ?? null);
+
+		$this->assertSame($name, $error->problemName());
+		$this->assertNotSame('', $error->$hint(), "$method $path $name");
+	}
+
+	/** Monokulo can't read the store's settings: nothing made, the customer may try again, and the log says so. */
+	public function test_store_unavailable_is_worth_trying_again(): void {
+		self::$monokulo->api('', 503, Api::recordedProblem('post', '/api/v1/orders', 'store-unavailable'));
+
+		try {
+			$this->client()->createOrder($this->connection(), []);
+			$this->fail('no error');
+		} catch (ApiError $e) {
+			$this->assertTrue($e->tryAgain());
+			$this->assertSame('error_try_again', $e->customerMessageKey());
+			$this->assertStringContainsString('could not read this store\'s settings', $e->merchantHint());
+			$this->assertStringContainsString('No Monokulo order was made', $e->merchantHint());
+			$this->assertStringContainsString('operator should check its logs and database', $e->merchantHint());
+		}
 	}
 
 	public function test_nothing_listening_is_a_transport_error(): void {
@@ -466,15 +517,18 @@ final class ClientTest extends TestCase {
 		$this->assertSame(['GET /api/v1'], $this->requests());
 	}
 
-	public function test_nothing_to_forward_sends_nothing_and_a_dead_monokulo_is_ignored(): void {
+	public function test_nothing_to_forward_sends_nothing_and_a_failure_is_returned(): void {
 		$this->client()->forwardLogs($this->connection(), []);
 		$this->assertSame([], self::$monokulo->requests());
 
 		$dead = new Connection('shop.example', 'http://127.0.0.1:' . FakeMonokulo::freePort() . '/api/v1', '', 'pk', 'sk', 'wh', 1);
-		$this->client()->forwardLogs($dead, [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']]);
-		self::$monokulo->respond('POST', '/api/v1/logs', 403, Api::recordedProblem('post', '/api/v1/logs', 'logs-off'));
+		$this->assertInstanceOf(TransportError::class, $this->client()->forwardLogs($dead, [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']]));
+		$logsOff = Api::recordedProblem('post', '/api/v1/logs', 'logs-off');
+		self::$monokulo->respond('POST', '/api/v1/logs', 403, $logsOff, headers: ['Content-Type' => 'application/problem+json']);
 		self::$monokulo->entry(Api::entry());
-		$this->client()->forwardLogs($this->connection(), [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']]);
-		$this->addToAssertionCount(1);
+		$refused = $this->client()->forwardLogs($this->connection(), [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']]);
+		$this->assertInstanceOf(ApiError::class, $refused);
+		$this->assertSame('logs-off', $refused->problemName());
+		$this->assertStringContainsString('turn them on in the store\'s settings in Monokulo', $refused->logsHint());
 	}
 }
