@@ -64,7 +64,7 @@ final class CheckoutOverHttpTest extends TestCase {
 
 	/** Monokulo down: the order is placed, and the customer is told and can try again. */
 	public function test_over_http_a_failed_payment_can_be_tried_again(): void {
-		$this->monokulo->api('', 503, Api::problem('engine-unavailable', 503, 'Payment engine unavailable', 'down'));
+		$this->monokulo->api('', 503, Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable'));
 		$browser = new Browser();
 
 		$answer = Storefront::payWithMonero($browser, Storefront::toPayment($browser));

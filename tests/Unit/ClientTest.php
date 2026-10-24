@@ -111,24 +111,27 @@ final class ClientTest extends TestCase {
 		}
 	}
 
-	/** @return array<string, array{string}> every status the handshake's problems come with */
-	public static function handshakeStatuses(): array {
+	/** @return array<string, array{string, string}> every problem the handshake answers with, by status and name */
+	public static function handshakeProblems(): array {
 		$out = [];
-		foreach (array_keys(Api::operation('post', '/plugins/connect/{slug}/finish')['responses']) as $status) {
+		foreach (Api::operation('post', '/plugins/connect/{slug}/finish')['responses'] as $status => $answer) {
 			if ((string)$status !== '200') {
-				$out[(string)$status] = [(string)$status];
+				foreach (array_keys($answer['content']['application/problem+json']['examples'] ?? ['none' => null]) as $name) {
+					$out[$status . ' ' . $name] = [(string)$status, (string)$name];
+				}
 			}
 		}
 
 		return $out;
 	}
 
-	/** Every way the handshake can fail is a problem: its status, `detail` and `type` reach the log. */
-	#[DataProvider('handshakeStatuses')]
-	public function test_a_refused_handshake_says_why(string $status): void {
+	/** Every way the handshake can fail is a recorded problem: its status, `detail` and `type` reach the log. */
+	#[DataProvider('handshakeProblems')]
+	public function test_a_refused_handshake_says_why(string $status, string $name): void {
 		$content = Api::operation('post', '/plugins/connect/{slug}/finish')['responses'][$status]['content'];
 		$this->assertSame(['application/problem+json'], array_keys($content));
-		$problem = array_values($content['application/problem+json']['examples'] ?? [])[0]['value'] ?? Api::problem('x', (int)$status, 'Title ' . $status, 'detail ' . $status);
+		$problem = Api::recordedProblem('post', '/plugins/connect/{slug}/finish', $name);
+		$this->assertSame((int)$status, $problem['status']);
 		self::$monokulo->respond('POST', '/plugins/connect/prestashop/finish', (int)$status, $problem, headers: ['Content-Type' => 'application/problem+json']);
 
 		try {
@@ -165,6 +168,25 @@ final class ClientTest extends TestCase {
 		$this->assertSame('application/json', $create['headers']['content-type']);
 		$this->assertSame('prestashop/' . Plugin::VERSION, $create['headers']['monokulo-client']);
 		$this->assertSame(['amount' => '1', 'currency' => 'EUR'], json_decode($create['body'], true));
+	}
+
+	/**
+	 * Monokulo leaves a field with no value out of an order instead of
+	 * sending `null`: an order without `cancelled_at`, `amount`, `currency`,
+	 * `merchant_order_id` or `description` is still the order made.
+	 */
+	public function test_an_order_without_its_optional_fields_is_the_order_made(): void {
+		$order = Api::order('order_1');
+		foreach (['cancelled_at', 'amount', 'currency', 'merchant_order_id', 'description'] as $field) {
+			unset($order[$field]);
+		}
+		self::$monokulo->api('order_1', body: $order);
+
+		$this->assertSame([
+			'order_id'       => 'order_1',
+			'checkout'       => self::$monokulo->url . '/checkout/order_1',
+			'onion_checkout' => Api::ONION . '/checkout/order_1',
+		], $this->client()->createOrder($this->connection(), ['amount' => '1', 'currency' => 'EUR']));
 	}
 
 	/** The entry links itself on the onion address only while Monokulo has one; the kept entry answers. */
@@ -312,14 +334,16 @@ final class ClientTest extends TestCase {
 
 	public static function failures(): array {
 		return [
-			'rate limited'  => [429, Api::problem('rate-limited', 429, 'Too many requests', 'slow down'), 'slow down', 'error_busy'],
-			'no rate'       => [503, Api::problem('rates-unavailable', 503, 'No exchange rate right now', 'no EUR rate'), 'no EUR rate', 'error_try_again'],
-			'engine busy'   => [503, Api::problem('engine-unavailable', 503, 'Payment engine unavailable', 'busy'), 'busy', 'error_try_again'],
+			'rate limited'  => [429, Api::recordedProblem('post', '/api/v1/orders', 'rate-limited'), Api::recordedProblem('post', '/api/v1/orders', 'rate-limited')['detail'], 'error_busy'],
+			'no rate'       => [503, Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable'), Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable')['detail'], 'error_try_again'],
+			'engine busy'   => [503, Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable'), Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable')['detail'], 'error_try_again'],
 			'503, no problem' => [503, 'Service Unavailable', 'Service Unavailable', 'error_try_again'],
-			'forbidden'     => [403, Api::problem('forbidden', 403, 'Not allowed with this key', 'nope'), 'nope', 'error_unavailable'],
+			'forbidden'     => [403, Api::recordedProblem('post', '/api/v1/orders', 'forbidden'), Api::recordedProblem('post', '/api/v1/orders', 'forbidden')['detail'], 'error_unavailable'],
 			'not priced'    => [400, Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount'), Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount')['detail'], 'error_currency'],
 			'invalid'       => [400, Api::recordedProblem('post', '/api/v1/orders', 'invalid-request'), Api::recordedProblem('post', '/api/v1/orders', 'invalid-request')['detail'], 'error_generic'],
-			'title only'    => [409, ['type' => 'https://docs.monokulo.com/problems/idempotency-conflict', 'title' => 'Key used for another order', 'status' => 409], 'Key used for another order', 'error_generic'],
+			'conflict'      => [409, Api::recordedProblem('post', '/api/v1/orders', 'idempotency-conflict'), Api::recordedProblem('post', '/api/v1/orders', 'idempotency-conflict')['detail'], 'error_generic'],
+			'title only'    => [409, array_diff_key(Api::recordedProblem('post', '/api/v1/orders', 'idempotency-conflict'), ['detail' => true]), Api::recordedProblem('post', '/api/v1/orders', 'idempotency-conflict')['title'], 'error_generic'],
+			'internal'      => [500, Api::recordedProblem('post', '/api/v1/orders', 'internal'), Api::recordedProblem('post', '/api/v1/orders', 'internal')['detail'], 'error_generic'],
 			'not a problem' => [500, 'oops', 'oops', 'error_generic'],
 			'wrong shape'   => [201, '{"id":"x"}', 'missing order_id or its mk:checkout link: {"id":"x"}', 'error_generic'],
 			'no checkout'   => [201, '{"order_id":"x"}', 'missing order_id or its mk:checkout link: {"order_id":"x"}', 'error_generic'],
@@ -349,25 +373,25 @@ final class ClientTest extends TestCase {
 	 * try again.
 	 */
 	public function test_a_try_again_problem_says_how_long_to_wait(): void {
-		$problem = Api::problem('rates-unavailable', 503, 'No exchange rate right now', 'no EUR rate') + ['retry_after' => 30];
+		$problem = Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable');
 		self::$monokulo->entry(Api::entry());
-		self::$monokulo->respond('POST', '/api/v1/orders', 503, $problem, headers: ['Content-Type' => 'application/problem+json', 'Retry-After' => '30']);
+		self::$monokulo->respond('POST', '/api/v1/orders', 503, $problem, headers: ['Content-Type' => 'application/problem+json', 'Retry-After' => (string)$problem['retry_after']]);
 
 		try {
 			$this->client()->createOrder($this->connection(), []);
 			$this->fail('no error');
 		} catch (ApiError $e) {
-			$this->assertSame(30, $e->retryAfter);
+			$this->assertSame($problem['retry_after'], $e->retryAfter);
 			$this->assertTrue($e->tryAgain());
 			$this->assertStringContainsString('no exchange rate for this currency right now', $e->merchantHint());
 			$this->assertStringContainsString('No Monokulo order was made', $e->merchantHint());
-			$this->assertStringContainsString('after 30 seconds', $e->merchantHint());
+			$this->assertStringContainsString('after ' . $problem['retry_after'] . ' seconds', $e->merchantHint());
 		}
 
 		// Only the header: it is read from there.
 		self::$monokulo->reset();
 		self::$monokulo->entry(Api::entry());
-		self::$monokulo->respond('POST', '/api/v1/orders', 503, Api::problem('engine-unavailable', 503, 'Payment engine unavailable', 'busy'), headers: ['Content-Type' => 'application/problem+json', 'Retry-After' => '5']);
+		self::$monokulo->respond('POST', '/api/v1/orders', 503, Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable'), headers: ['Content-Type' => 'application/problem+json', 'Retry-After' => '5']);
 		try {
 			$this->client()->createOrder($this->connection(), []);
 			$this->fail('no error');
@@ -378,7 +402,7 @@ final class ClientTest extends TestCase {
 
 		// Neither: no wait is claimed.
 		self::$monokulo->reset();
-		self::$monokulo->api('', 503, Api::problem('engine-unavailable', 503, 'Payment engine unavailable', 'busy'));
+		self::$monokulo->api('', 503, Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable'));
 		try {
 			$this->client()->createOrder($this->connection(), []);
 			$this->fail('no error');
