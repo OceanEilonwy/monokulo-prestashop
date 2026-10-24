@@ -52,7 +52,9 @@ final class ContractTest extends TestCase {
 	public function test_the_secret_keys_entry_offers_the_modules_forms_and_may_be_kept(): void {
 		$this->assertArrayHasKey('create-order', Api::entry()['_templates']);
 		$this->assertArrayHasKey('send-logs', Api::entry()['_templates']);
+		$this->assertArrayHasKey('send-test-webhook', Api::entry()['_templates']);
 		$this->assertArrayNotHasKey('send-logs', Api::example('get', '/api/v1', '200', 'pk')['_templates'], 'only the secret key may send logs');
+		$this->assertArrayNotHasKey('send-test-webhook', Api::example('get', '/api/v1', '200', 'pk')['_templates'], 'only the secret key may send a test');
 
 		$entry = Api::operation('get', '/api/v1');
 		$this->assertSame(['Cache-Control', 'ETag', 'Vary'], array_keys($entry['responses']['200']['headers']));
@@ -101,12 +103,12 @@ final class ContractTest extends TestCase {
 
 	/**
 	 * The merchant's link to the order comes with its webhooks: every
-	 * published delivery links `mk:dashboard-order`, the dashboard page the
+	 * published delivery about the order links `mk:dashboard-order`, the dashboard page the
 	 * API gives the secret key (and not the public key), absolute.
 	 */
 	public function test_the_merchants_link_comes_with_every_webhook(): void {
 		$route = '#\Ahttps?://[^/]+/stores/[^/]+/orders/[^/]+\z#';
-		foreach (Vectors::deliveries() as $name => $delivery) {
+		foreach (Vectors::orderDeliveries() as $name => $delivery) {
 			$this->assertMatchesRegularExpression($route, json_decode($delivery['body'], true)['_links']['mk:dashboard-order']['href'], $name);
 		}
 		$this->assertSame('text/html', Api::order('order_1')['_links']['mk:dashboard-order']['type']);
@@ -168,5 +170,50 @@ final class ContractTest extends TestCase {
 		$this->assertArrayNotHasKey('onion_api', Api::finished(onion: false), 'no onion address, no onion entry');
 		$this->assertArrayNotHasKey('mk:onion-api', Api::entry(onion: false)['_links']);
 		$this->assertSame(Api::finished()['secret_token'], Api::finished(onion: false)['secret_token'], 'one story: the same store either way');
+	}
+
+	/**
+	 * "Test connection" sends `{}` with the send-test-webhook form (the
+	 * shop's own webhook), and reads the fields its answer has: the stand-in's
+	 * answers are the recorded one, and one changed only where the schema
+	 * says a test that wasn't delivered differs.
+	 */
+	public function test_the_test_webhook_form_takes_and_answers_what_the_module_uses(): void {
+		$form = Api::entry()['_templates']['send-test-webhook'];
+		$this->assertSame(['POST', '/api/v1/webhook-tests', 'application/json'], [$form['method'], $form['target'], $form['contentType']]);
+		$this->assertSame([], Api::schema('WebhookTestsInput')['required'] ?? [], '{} is a whole request');
+		$this->assertSame(['webhook_id'], array_column($form['properties'], 'name'));
+		$this->assertEquals((object)[], (object)Api::operation('post', '/api/v1/webhook-tests')['requestBody']['content']['application/json']['example']);
+
+		$answer = Api::schema('WebhookTests');
+		$read = ['event_id', 'delivered', 'status', 'duration_ms', 'error', 'response', 'next_attempt_at'];
+		$this->assertSame([], array_values(array_diff($read, $this->properties($answer))), 'every field the module reads is one Monokulo answers');
+		$this->assertSame([], array_values(array_diff(['event_id', 'delivered', 'duration_ms'], $answer['required'])));
+		foreach (['status', 'error', 'response', 'next_attempt_at'] as $optional) {
+			$this->assertNotContains($optional, $answer['required'], $optional . ' is left out when there is none');
+		}
+		$this->assertSame([], array_values(array_diff(array_keys(Api::testNotDelivered()), $this->properties($answer))), 'the stand-in\'s undelivered test has the same shape');
+		$this->assertTrue(Api::testDelivered()['delivered']);
+		$this->assertArrayNotHasKey('error', Api::testDelivered(), 'delivered: no error');
+		$this->assertArrayNotHasKey('next_attempt_at', Api::testDelivered(), 'delivered: not tried again');
+
+		$responses = Api::operation('post', '/api/v1/webhook-tests')['responses'];
+		foreach (['not-found' => 404, 'rate-limited' => 429] as $name => $status) {
+			$this->assertSame($status, Api::recordedProblem('post', '/api/v1/webhook-tests', $name)['status'], $name);
+		}
+		$this->assertArrayHasKey('Retry-After', $responses['429']['headers']);
+		$this->assertIsInt(Api::recordedProblem('post', '/api/v1/webhook-tests', 'rate-limited')['retry_after']);
+		$this->assertArrayNotHasKey('default', $responses);
+	}
+
+	/** A test delivery names the store and the webhook, and no order: there's nothing to act on. */
+	public function test_a_test_delivery_has_no_order(): void {
+		$test = json_decode(Vectors::delivery('webhook.test')['body'], true);
+		$this->assertSame('webhook.test', $test['event']);
+		$this->assertSame('webhook.test', Vectors::delivery('webhook.test')['headers']['X-Monokulo-Event']);
+		$this->assertArrayNotHasKey('order_id', $test);
+		$this->assertArrayNotHasKey('status', $test);
+		$this->assertMatchesRegularExpression('/\Awh_[0-9a-f]{32}\z/', $test['webhook']['id']);
+		$this->assertArrayHasKey('mk:store', $test['_links']);
 	}
 }

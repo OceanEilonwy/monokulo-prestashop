@@ -154,6 +154,27 @@ retries a delivery the shop didn't take; a delivery seen before changes
 nothing. Deliveries and their answers are listed in Monokulo, in the store's
 settings under *Webhooks*. While the shop is in maintenance mode, PrestaShop
 answers every request with 503, and Monokulo retries until it's back.
+An event the module doesn't know is answered 200 and changes nothing, so
+a newer Monokulo's events never show as failed deliveries.
+
+### Test connection
+
+**Test connection**, next to each connected shop under **Stores**, has
+Monokulo send the shop's webhook a test webhook (`webhook.test`, signed
+like every delivery) through the API entry's `send-test-webhook` form, and
+says how it went, in the back office's usual notices:
+
+- *the shop took it*, with the HTTP status and how long it took;
+- *the shop did not take it*, with why (`answered 500`, `timed out`, …)
+  and when Monokulo tries it again (the log has what the shop answered);
+- Monokulo's limit of 6 tests a minute for a store, with how long to wait;
+- no webhook for the shop in Monokulo (connect again).
+
+The module accepts a test webhook only once its signature checks out,
+answers 200, and changes no order. It keeps the last one: the Stores panel
+shows *Last test webhook received* with its time and event id (or *No test
+webhook received yet*), so a test sent from Monokulo's own *Send a test
+webhook* button shows up there too. Connecting again forgets it.
 
 ## Logs
 
@@ -203,7 +224,13 @@ password `admin-password-1`.
   Monokulo meets a real `rates-unavailable` (no Monokulo order, a try-again
   message, the reason in the log); then the payment link lands on the
   Monokulo checkout, whose
-  status is pending, and its dashboard link opens the order there; the next orders use the kept API entry. Nothing is paid.
+  status is pending, and its dashboard link opens the order there; the next orders use the kept API entry;
+  then the connection end to end: the entry's `send-test-webhook` form has
+  Monokulo deliver a real signed `webhook.test` to the shop's registered
+  webhook address (`delivered`, a 2xx), the shop kept that same event id
+  as its last test, no order changed and the settings page shows it; and
+  **Test connection**, pressed on the real settings page, says the shop
+  took it. Nothing is paid.
 
 The test shop leaves out PrestaShop's marketing and cloud modules
 (`docker/ps-setup`), which call home and take no part in a payment.
@@ -216,7 +243,8 @@ The tests are pinned to a monokulo commit (`tests/vectors/PIN`):
   `scripts/openapi` generates it from Monokulo's source into
   `tests/openapi.json` (not committed; CI caches it per commit).
 - Webhook tests use Monokulo's published test vectors, vendored in
-  `tests/vectors`. `scripts/vectors check` compares them with the pinned
+  `tests/vectors` (a signed delivery of each event, `webhook.test`
+  included). `scripts/vectors check` compares them with the pinned
   commit; `scripts/vectors pin <commit>` moves the pin (then run
   `scripts/openapi` again).
 

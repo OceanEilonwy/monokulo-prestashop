@@ -19,6 +19,7 @@ if (!defined('_PS_VERSION_')) {
 /**
  * The parts of a webhook body (api_version 2) this plugin acts on. Fields it
  * doesn't need are ignored, and fields monokulo adds later don't break it.
+ * `orderId` is null for an event about no order (`webhook.test`).
  * `dashboard` is the order's page on the merchant's dashboard, the body's
  * `mk:dashboard-order` link (absolute, as every webhook link is), or null.
  */
@@ -27,7 +28,7 @@ final class WebhookEvent
     private function __construct(
         public readonly string $event,
         public readonly string $eventId,
-        public readonly string $orderId,
+        public readonly ?string $orderId,
         public readonly ?string $txid,
         public readonly ?string $dashboard,
     ) {
@@ -40,15 +41,19 @@ final class WebhookEvent
         if (!is_array($data)) {
             return null;
         }
-        foreach (['event', 'event_id', 'order_id'] as $key) {
+        foreach (['event', 'event_id'] as $key) {
             if (!isset($data[$key]) || !is_string($data[$key]) || $data[$key] === '') {
                 return null;
             }
+        }
+        // Left out by an event about no order; when there, an order's id.
+        if (array_key_exists('order_id', $data) && (!is_string($data['order_id']) || $data['order_id'] === '')) {
+            return null;
         }
         $text = static fn (string $key): ?string => isset($data[$key]) && is_string($data[$key]) && $data[$key] !== '' ? $data[$key] : null;
 
         $dashboard = $data['_links']['mk:dashboard-order']['href'] ?? null;
 
-        return new self($data['event'], $data['event_id'], $data['order_id'], $text('txid'), is_string($dashboard) && $dashboard !== '' ? $dashboard : null);
+        return new self($data['event'], $data['event_id'], $text('order_id'), $text('txid'), is_string($dashboard) && $dashboard !== '' ? $dashboard : null);
     }
 }

@@ -20,11 +20,18 @@
             {if $store.connected}
               {$store.connected|escape:'html':'UTF-8'}
               {if $store.onion}<br><span class="text-muted monokulo-onion">{$store.onion|escape:'html':'UTF-8'}</span>{/if}
+              <br><span class="text-muted monokulo-last-test">{$store.last_test|escape:'html':'UTF-8'}</span>
             {else}
               {$monokulo_text.not_connected|escape:'html':'UTF-8'}
             {/if}
           </td>
           <td class="text-right">
+            {if $store.connected}
+              <form method="post" action="{$monokulo_back|escape:'html':'UTF-8'}" class="monokulo-test" style="display: inline">
+                <input type="hidden" name="monokulo_test" value="{$store.id|intval}">
+                <button type="submit" name="submitMonokuloTest" value="1" class="btn btn-default">{$monokulo_text.test|escape:'html':'UTF-8'}</button>
+              </form>
+            {/if}
             {if $monokulo_can_connect}
               <a href="{$store.connect|escape:'html':'UTF-8'}" class="btn {if $store.connected}btn-default{else}btn-primary{/if} monokulo-connect">{if $store.connected}{$monokulo_text.reconnect|escape:'html':'UTF-8'}{else}{$monokulo_text.connect|escape:'html':'UTF-8'}{/if}</a>
             {/if}

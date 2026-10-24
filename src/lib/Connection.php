@@ -31,6 +31,9 @@ final class Connection
      * @param string $onionApi the same entry on Monokulo's onion address, or
      *                         '' when it had none when the shop connected
      * @param Entry|null $entry the entry as last read, or null before the first order
+     * @param int $lastTestAt when its webhook last received a test webhook
+     *                        (`webhook.test`), Unix seconds; 0 before the first
+     * @param string $lastTestEventId that test's `event_id`, or ''
      */
     public function __construct(
         public readonly string $host,
@@ -41,6 +44,8 @@ final class Connection
         public readonly string $webhookSecret,
         public readonly int $connectedAt,
         public readonly ?Entry $entry = null,
+        public readonly int $lastTestAt = 0,
+        public readonly string $lastTestEventId = '',
     ) {
     }
 }

@@ -15,7 +15,7 @@ final class WebhookEventTest extends TestCase {
 		$this->assertNotNull($event);
 		$this->assertSame($delivery['headers']['X-Monokulo-Event'], $event->event);
 		$this->assertSame($delivery['headers']['X-Monokulo-Event-Id'], $event->eventId);
-		$this->assertSame(Vectors::orderId(), $event->orderId);
+		$this->assertSame($delivery['name'] === 'webhook.test' ? null : Vectors::orderId(), $event->orderId, 'a test is about no order');
 	}
 
 	public function test_the_double_spend_events_carry_their_transaction(): void {
@@ -28,6 +28,11 @@ final class WebhookEventTest extends TestCase {
 	/** Every delivery links the order's page on the merchant's dashboard, absolute. */
 	#[DataProviderExternal(Vectors::class, 'deliveryCases')]
 	public function test_every_published_delivery_links_the_dashboard(array $delivery): void {
+		if ($delivery['name'] === 'webhook.test') {
+			$this->assertNull(WebhookEvent::parse($delivery['body'])->dashboard, 'no order, no order page');
+
+			return;
+		}
 		$this->assertMatchesRegularExpression('#\Ahttps://[^/]+/stores/[^/]+/orders/' . Vectors::orderId() . '\z#', (string)WebhookEvent::parse($delivery['body'])->dashboard);
 	}
 
@@ -37,15 +42,22 @@ final class WebhookEventTest extends TestCase {
 			'a list'            => ['[1,2]'],
 			'no event'          => ['{"event_id":"evt_1","order_id":"o1"}'],
 			'no event id'       => ['{"event":"order.paid","order_id":"o1"}'],
-			'no order id'       => ['{"event":"order.paid","event_id":"evt_1"}'],
 			'empty event id'    => ['{"event":"order.paid","event_id":"","order_id":"o1"}'],
 			'numeric order id'  => ['{"event":"order.paid","event_id":"evt_1","order_id":5}'],
+			'empty order id'    => ['{"event":"order.paid","event_id":"evt_1","order_id":""}'],
 		];
 	}
 
 	#[DataProvider('notEnvelopes')]
 	public function test_anything_else_is_not_an_event(string $body): void {
 		$this->assertNull(WebhookEvent::parse($body));
+	}
+
+	/** An event about no order (a test) leaves `order_id` out; the receiver decides whether it needs one. */
+	public function test_an_event_without_an_order_parses_with_none(): void {
+		$event = WebhookEvent::parse('{"event":"webhook.test","event_id":"evt_1","webhook":{"id":"wh_1"}}');
+
+		$this->assertSame(['webhook.test', 'evt_1', null], [$event->event, $event->eventId, $event->orderId]);
 	}
 
 	/** Fields Monokulo adds later, or optional ones left out, don't stop it. */
