@@ -12,7 +12,8 @@ if (!defined('_PS_VERSION_')) {
 }
 
 /**
- * 0.3.0 keeps the API entry between orders, and Monokulo's onion address.
+ * 0.3.0 keeps the API entry between orders, Monokulo's onion address, and
+ * the last test webhook received.
  * A shop on 0.2.0 keeps its connection and orders (Repository::install adds
  * the columns, and drops the dashboard link an early 0.3.0 kept); its
  * connection learns the onion address when it connects again.

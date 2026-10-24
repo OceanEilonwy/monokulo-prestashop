@@ -1,6 +1,7 @@
 <?php
 namespace Monokulo\PrestaShop\Tests\Admin;
 
+use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\ShopTestCase;
 
 /**
@@ -118,5 +119,36 @@ final class SettingsTest extends ShopTestCase {
 		$this->module()->startConnect(1, self::ADMIN);
 
 		$this->assertCount(1, $this->rows('SELECT * FROM `' . _DB_PREFIX_ . 'monokulo_connect_nonce`'));
+	}
+
+	/** "Test connection" sends the shop's own connection's test, and says how it went. */
+	public function test_test_connection_follows_the_form_for_that_shop(): void {
+		$this->connect();
+		self::$monokulo->entry(Api::entry());
+		self::$monokulo->respond('POST', '/api/v1/webhook-tests', 200, Api::testDelivered());
+		$before = $this->logSize();
+
+		$outcome = $this->module()->testConnection(1);
+
+		$this->assertSame(['confirmation', 'test_delivered'], [$outcome->notice, $outcome->key]);
+		$this->assertSame('Bearer sk_test', self::$monokulo->requests()[1]['headers']['authorization']);
+		$this->assertStringContainsString('Test connection for localhost:8093: test_delivered.', $this->logSince($before));
+	}
+
+	/** Not delivered: the log says what the shop answered. */
+	public function test_a_test_not_delivered_is_logged(): void {
+		$this->connect();
+		self::$monokulo->entry(Api::entry());
+		self::$monokulo->respond('POST', '/api/v1/webhook-tests', 200, Api::testNotDelivered());
+		$before = $this->logSize();
+
+		$this->assertSame('test_failed_retry', $this->module()->testConnection(1)->key);
+		$this->assertStringContainsString('was not delivered to the shop: answered 500', $this->logSince($before));
+	}
+
+	public function test_a_shop_that_is_not_connected_has_nothing_to_test(): void {
+		$this->assertSame('test_not_found', $this->module()->testConnection(1)->key);
+		$this->assertSame('test_not_found', $this->module()->testConnection(99)->key);
+		$this->assertSame([], self::$monokulo->requests());
 	}
 }

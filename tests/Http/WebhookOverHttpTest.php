@@ -69,13 +69,24 @@ final class WebhookOverHttpTest extends TestCase {
 		$this->assertStringContainsString('Monokulo: paid in full.', implode("\n", $this->notes()));
 	}
 
-	/** Every published event, in order, over HTTP: each accepted, ending paid. */
+	/** Every published event, in order, over HTTP: each accepted, ending paid, with a note for each about the order. */
 	public function test_over_http_every_published_delivery_is_accepted(): void {
 		foreach (array_keys(Vectors::deliveries()) as $name) {
 			$this->assertSame(200, $this->deliver($name), $name);
 		}
 		$this->assertSame((int)Shop::setting('PS_OS_PAYMENT'), $this->orderStatus());
-		$this->assertCount(count(Vectors::deliveries()), $this->notes());
+		$this->assertCount(count(Vectors::orderDeliveries()), $this->notes());
+	}
+
+	/** A test webhook over HTTP: 200, kept as the last test, and no order changes. */
+	public function test_over_http_a_test_webhook_is_kept_and_changes_no_order(): void {
+		$this->assertSame(200, $this->deliver('webhook.test'));
+
+		$connection = Shop::rows("SELECT last_test_at, last_test_event_id FROM ps_monokulo_connection WHERE host = 'localhost:8093'")[0];
+		$this->assertSame(Vectors::delivery('webhook.test')['headers']['X-Monokulo-Event-Id'], $connection['last_test_event_id']);
+		$this->assertEqualsWithDelta(time(), (int)$connection['last_test_at'], 30);
+		$this->assertSame($this->placed, $this->orderStatus());
+		$this->assertSame([], $this->notes());
 	}
 
 	public function test_over_http_a_repeat_changes_nothing(): void {

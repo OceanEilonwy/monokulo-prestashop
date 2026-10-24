@@ -1,6 +1,7 @@
 <?php
 namespace Monokulo\PrestaShop\Tests\Http;
 
+use Monokulo\PrestaShop\Tests\Support\Api;
 use Monokulo\PrestaShop\Tests\Support\Browser;
 use Monokulo\PrestaShop\Tests\Support\FakeMonokulo;
 use Monokulo\PrestaShop\Tests\Support\Shop;
@@ -57,6 +58,60 @@ final class SettingsOverHttpTest extends TestCase {
 		}
 		$this->assertMatchesRegularExpression('/name="MONOKULO_OS_PAID".*?<option value="' . Shop::setting('PS_OS_PAYMENT') . '"\s+selected/s', $page->body);
 		$this->assertStringNotContainsString('.onion', $text, 'connected before 0.3.0, or to a Monokulo with no onion address');
+		$this->assertStringContainsString('No test webhook received yet.', $text);
+		$this->assertStringContainsString('Test connection', $text);
+	}
+
+	public function test_over_http_the_page_shows_the_last_test_webhook_received(): void {
+		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', api = 'https://pay.example.com/api/v1', public_key = 'pk_test', secret_token = 'sk', webhook_secret = 'wh', connected_at = 1760000000, last_test_at = " . time() . ", last_test_event_id = 'evt_0000000000000012'");
+
+		$this->assertMatchesRegularExpression('/Last test webhook received: \S.* \(evt_0000000000000012\)/', Shop::settingsPage($this->browser)->text());
+	}
+
+	/** Not connected: nothing to test. */
+	public function test_over_http_no_test_button_before_connecting(): void {
+		$page = Shop::settingsPage($this->browser);
+
+		$this->assertStringNotContainsString('Test connection', $page->text());
+		$this->assertStringNotContainsString('name="monokulo_test"', $page->body);
+	}
+
+	/**
+	 * "Test connection" follows the entry's send-test-webhook form and says
+	 * how it went, in the back office's own notices: delivered, not
+	 * delivered (with when Monokulo tries again), or too many tests.
+	 */
+	public function test_over_http_test_connection_says_how_it_went(): void {
+		Shop::exec("INSERT INTO ps_monokulo_connection SET host = 'localhost:8093', api = " . Shop::quote($this->monokulo->url . '/api/v1') . ", public_key = 'pk_test', secret_token = 'sk_http', webhook_secret = 'wh', connected_at = 1760000000");
+		$this->monokulo->entry(Api::entry());
+		$this->monokulo->respond('POST', '/api/v1/webhook-tests', 200, Api::testDelivered());
+
+		$page = Shop::settingsPage($this->browser);
+		$tested = $this->browser->submitWith($page, 'monokulo_test', ['submitMonokuloTest' => '1']);
+
+		$this->assertSame(200, $tested->status);
+		$this->assertStringContainsString('Monokulo sent this shop a test webhook, and the shop took it: HTTP 200 in 12 ms (' . Api::testDelivered()['event_id'] . ').', $tested->text());
+		$this->assertMatchesRegularExpression('/class="[^"]*alert-success[^"]*"/', $tested->body, 'a confirmation');
+		$request = $this->monokulo->requests()[1];
+		$this->assertSame('POST /api/v1/webhook-tests', $request['method'] . ' ' . $request['path']);
+		$this->assertSame('{}', $request['body']);
+		$this->assertSame('Bearer sk_http', $request['headers']['authorization']);
+
+		$this->monokulo->respond('POST', '/api/v1/webhook-tests', 200, Api::testNotDelivered());
+		$failed = $this->browser->submitWith(Shop::settingsPage($this->browser), 'monokulo_test', ['submitMonokuloTest' => '1']);
+		$this->assertStringContainsString('Monokulo sent this shop a test webhook, but the shop did not take it: answered 500. Monokulo tries again at', $failed->text());
+		$this->assertMatchesRegularExpression('/class="[^"]*alert-danger[^"]*"/', $failed->body, 'an error');
+
+		$limited = Api::recordedProblem('post', '/api/v1/webhook-tests', 'rate-limited');
+		$this->monokulo->respond('POST', '/api/v1/webhook-tests', 429, $limited, headers: ['Content-Type' => 'application/problem+json', 'Retry-After' => '120']);
+		$waited = $this->browser->submitWith(Shop::settingsPage($this->browser), 'monokulo_test', ['submitMonokuloTest' => '1']);
+		$this->assertStringContainsString('Monokulo sends at most 6 test webhooks a minute for a store. Wait 120 seconds, then test again.', $waited->text());
+		$this->assertMatchesRegularExpression('/class="[^"]*alert-warning[^"]*"/', $waited->body, 'a warning');
+
+		$missing = Api::recordedProblem('post', '/api/v1/webhook-tests', 'not-found');
+		$this->monokulo->respond('POST', '/api/v1/webhook-tests', 404, $missing, headers: ['Content-Type' => 'application/problem+json']);
+		$notFound = $this->browser->submitWith(Shop::settingsPage($this->browser), 'monokulo_test', ['submitMonokuloTest' => '1']);
+		$this->assertStringContainsString('Monokulo has no webhook for this shop to test. Connect the shop again.', $notFound->text());
 	}
 
 	/** Connected to a Monokulo with an onion address: Tor customers pay there. */

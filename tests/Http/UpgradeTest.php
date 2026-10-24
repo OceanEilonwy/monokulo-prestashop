@@ -105,9 +105,9 @@ final class UpgradeTest extends TestCase {
 
 		$repository->install();
 
-		$this->assertSame(['host', 'api', 'onion_api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at', 'entry', 'entry_etag', 'entry_expires_at'], $this->columns('connection'));
+		$this->assertSame(['host', 'api', 'onion_api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at', 'entry', 'entry_etag', 'entry_expires_at', 'last_test_at', 'last_test_event_id'], $this->columns('connection'));
 		$connection = $repository->connection('shop.example');
-		$this->assertSame(['https://example.com/monokulo/api/v1', '', 'pk_a', 'sk_a', 'whsec_a', 1760000000, null], [$connection->api, $connection->onionApi, $connection->publicKey, $connection->secretToken, $connection->webhookSecret, $connection->connectedAt, $connection->entry]);
+		$this->assertSame(['https://example.com/monokulo/api/v1', '', 'pk_a', 'sk_a', 'whsec_a', 1760000000, null, 0, ''], [$connection->api, $connection->onionApi, $connection->publicKey, $connection->secretToken, $connection->webhookSecret, $connection->connectedAt, $connection->entry, $connection->lastTestAt, $connection->lastTestEventId]);
 
 		// Again (the next install, or a second upgrade run) changes nothing.
 		$repository->install();

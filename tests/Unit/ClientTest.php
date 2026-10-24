@@ -531,4 +531,67 @@ final class ClientTest extends TestCase {
 		$this->assertSame('logs-off', $refused->problemName());
 		$this->assertStringContainsString('turn them on in the store\'s settings in Monokulo', $refused->logsHint());
 	}
+
+	/** "Test connection" follows the entry's send-test-webhook form with `{}`: the shop's own webhook. */
+	public function test_a_test_webhook_is_sent_with_the_entrys_form(): void {
+		self::$monokulo->entry(Api::entry());
+		self::$monokulo->respond('POST', '/api/v1/webhook-tests', 200, Api::testDelivered(), headers: ['Content-Type' => 'application/prs.hal-forms+json']);
+
+		$answer = $this->client()->sendTestWebhook($this->connection());
+
+		$this->assertSame(Api::testDelivered(), $answer);
+		$this->assertSame(['GET /api/v1', 'POST /api/v1/webhook-tests'], $this->requests());
+		$request = self::$monokulo->requests()[1];
+		$this->assertSame('{}', $request['body']);
+		$this->assertSame('application/json', $request['headers']['content-type']);
+		$this->assertSame('Bearer sk_test', $request['headers']['authorization']);
+		$this->assertSame('prestashop/' . Plugin::VERSION, $request['headers']['monokulo-client']);
+	}
+
+	/** Wherever the form says, never a path of the module's own. */
+	public function test_the_form_decides_where_the_test_goes(): void {
+		$entry = Api::entry();
+		$entry['_templates']['send-test-webhook']['target'] = '/elsewhere/tests';
+		self::$monokulo->entry($entry);
+		self::$monokulo->respond('POST', '/elsewhere/tests', 200, Api::testNotDelivered());
+
+		$this->assertFalse($this->client()->sendTestWebhook($this->connection())['delivered']);
+		$this->assertSame(['GET /api/v1', 'POST /elsewhere/tests'], $this->requests());
+	}
+
+	public static function refusedTests(): array {
+		return [
+			'rate limited'      => ['rate-limited', 429, 120],
+			'no webhook to test' => ['not-found', 404, null],
+		];
+	}
+
+	/** Monokulo's problems come back as they are, with how long to wait. */
+	#[DataProvider('refusedTests')]
+	public function test_a_refused_test_says_why(string $name, int $status, ?int $retryAfter): void {
+		$problem = Api::recordedProblem('post', '/api/v1/webhook-tests', $name);
+		self::$monokulo->entry(Api::entry());
+		self::$monokulo->respond('POST', '/api/v1/webhook-tests', $status, $problem, headers: ['Content-Type' => 'application/problem+json'] + ($retryAfter !== null ? ['Retry-After' => (string)$retryAfter] : []));
+
+		try {
+			$this->client()->sendTestWebhook($this->connection());
+			$this->fail('refused');
+		} catch (ApiError $e) {
+			$this->assertSame([$status, $name, $retryAfter], [$e->status, $e->problemName(), $e->retryAfter]);
+		}
+	}
+
+	public function test_an_entry_without_the_test_form_sends_no_test(): void {
+		$entry = Api::entry();
+		unset($entry['_templates']['send-test-webhook']);
+		self::$monokulo->entry($entry);
+
+		try {
+			$this->client()->sendTestWebhook($this->connection());
+			$this->fail('no form');
+		} catch (ApiError $e) {
+			$this->assertSame(0, $e->status);
+		}
+		$this->assertSame(['GET /api/v1'], $this->requests());
+	}
 }

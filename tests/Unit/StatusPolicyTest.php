@@ -8,8 +8,8 @@ use Monokulo\PrestaShop\WebhookEvent;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The order-status table the README documents, checked against every event
- * in Monokulo's published vectors.
+ * The order-status table the README documents, checked against every order
+ * event in Monokulo's published vectors.
  */
 final class StatusPolicyTest extends TestCase {
 	private const TABLE = [
@@ -27,7 +27,7 @@ final class StatusPolicyTest extends TestCase {
 
 	public function test_every_published_event_follows_the_table(): void {
 		$seen = [];
-		foreach (Vectors::deliveries() as $name => $delivery) {
+		foreach (Vectors::orderDeliveries() as $name => $delivery) {
 			$event = WebhookEvent::parse($delivery['body']);
 			$this->assertArrayHasKey($event->event, self::TABLE, "Monokulo publishes $name, which the table doesn't cover");
 			[$status, $note, $notify] = self::TABLE[$event->event];
@@ -41,6 +41,12 @@ final class StatusPolicyTest extends TestCase {
 		}
 
 		$this->assertSame(array_keys(self::TABLE), array_keys(array_intersect_key(self::TABLE, $seen)), 'every row of the table is in the vectors');
+	}
+
+	/** A test webhook changes no order (the receiver keeps it as the last test, and stops there). */
+	public function test_a_test_webhook_moves_no_order(): void {
+		$this->assertSame(['webhook.test'], array_keys(array_diff_key(Vectors::deliveries(), Vectors::orderDeliveries())), 'the only delivery about no order');
+		$this->assertNull(StatusPolicy::decide(WebhookEvent::parse(Vectors::delivery('webhook.test')['body'])));
 	}
 
 	/** A newer Monokulo's event is accepted and changes nothing. */

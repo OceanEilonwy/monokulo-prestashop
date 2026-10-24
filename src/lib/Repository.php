@@ -20,7 +20,8 @@ if (!defined('_PS_VERSION_')) {
  * The module's own tables.
  *
  * - `monokulo_connection`: one row per shop host that has connected, with
- *   the API entry as last read for its key.
+ *   the API entry as last read for its key, and the last test webhook it
+ *   received.
  * - `monokulo_order`: every Monokulo order the shop created, which
  *   PrestaShop order it pays, and when it was paid. A PrestaShop order can
  *   have more than one when its total changed after a first attempt; the
@@ -60,6 +61,8 @@ final class Repository implements EntryStore
                 `entry` MEDIUMTEXT NULL,
                 `entry_etag` VARCHAR(255) NOT NULL DEFAULT '',
                 `entry_expires_at` INT(11) NOT NULL DEFAULT 0,
+                `last_test_at` INT(11) NOT NULL DEFAULT 0,
+                `last_test_event_id` VARCHAR(64) NOT NULL DEFAULT '',
                 PRIMARY KEY (`host`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
             "CREATE TABLE IF NOT EXISTS `{$p}monokulo_order` (
@@ -105,6 +108,8 @@ final class Repository implements EntryStore
             'entry' => 'MEDIUMTEXT NULL',
             'entry_etag' => "VARCHAR(255) NOT NULL DEFAULT ''",
             'entry_expires_at' => 'INT(11) NOT NULL DEFAULT 0',
+            'last_test_at' => 'INT(11) NOT NULL DEFAULT 0',
+            'last_test_event_id' => "VARCHAR(64) NOT NULL DEFAULT ''",
         ],
     ];
 
@@ -155,10 +160,16 @@ final class Repository implements EntryStore
             $row['webhook_secret'],
             (int) $row['connected_at'],
             is_string($row['entry']) ? Entry::fromJson($row['entry'], $row['entry_etag'], (int) $row['entry_expires_at']) : null,
+            (int) $row['last_test_at'],
+            $row['last_test_event_id'],
         );
     }
 
-    /** Saves a new connection, replacing the host's old one (and its kept entry, which was for the old key). */
+    /**
+     * Saves a new connection, replacing the host's old one (and its kept
+     * entry, which was for the old key, and its last test webhook, which
+     * was for the old webhook).
+     */
     public function saveConnection(Connection $c): void
     {
         $q = fn (string $v): string => $this->db->quote($v);
@@ -176,6 +187,18 @@ final class Repository implements EntryStore
             'UPDATE `' . $this->table('connection') . '` SET `entry` = ' . $this->db->quote($entry->json())
             . ', `entry_etag` = ' . $this->db->quote($entry->etag) . ', `entry_expires_at` = ' . $entry->expiresAt
             . ' WHERE `host` = ' . $this->db->quote($c->host) . ' AND `secret_token` = ' . $this->db->quote($c->secretToken)
+        );
+    }
+
+    /**
+     * Notes that the connection's webhook received test event `eventId` (a
+     * `webhook.test`, signed with its secret) at `now`.
+     */
+    public function recordTest(Connection $c, string $eventId, int $now): void
+    {
+        $this->db->execute(
+            'UPDATE `' . $this->table('connection') . '` SET `last_test_at` = ' . $now . ', `last_test_event_id` = ' . $this->db->quote(substr($eventId, 0, 64))
+            . ' WHERE `host` = ' . $this->db->quote($c->host) . ' AND `webhook_secret` = ' . $this->db->quote($c->webhookSecret)
         );
     }
 

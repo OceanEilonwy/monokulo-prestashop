@@ -105,9 +105,9 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertStringStartsWith('https://', $this->dashboard('order.paid'), 'absolute, as every webhook link is');
 	}
 
-	/** Every event links the merchant to the order in Monokulo, from that delivery's own links. */
+	/** Every order event links the merchant to the order in Monokulo, from that delivery's own links. */
 	public function test_every_note_links_the_order_in_monokulo(): void {
-		foreach (Vectors::deliveries() as $name => $delivery) {
+		foreach (Vectors::orderDeliveries() as $name => $delivery) {
 			$this->deliver($delivery['body'], $delivery['headers']['X-Monokulo-Signature']);
 			$this->assertStringEndsWith(' In Monokulo: ' . $this->dashboard($name), $this->lastNote(), $name);
 		}
@@ -206,12 +206,12 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertStringContainsString('The order was already paid, so its status is left as it is', $this->lastNote());
 	}
 
-	/** Every published delivery, in order, on one order: each applies once, with one note each. */
+	/** Every published delivery, in order, on one order: each about the order applies once, with one note each. */
 	public function test_every_published_delivery_is_accepted(): void {
 		foreach (Vectors::deliveries() as $name => $delivery) {
 			$this->assertSame(200, $this->deliver($delivery['body'], $delivery['headers']['X-Monokulo-Signature']), $name);
 		}
-		$this->assertCount(count(Vectors::deliveries()), $this->notes((int)$this->order->id));
+		$this->assertCount(count(Vectors::orderDeliveries()), $this->notes((int)$this->order->id));
 		$this->assertSame((int)\Configuration::get('PS_OS_PAYMENT'), $this->currentStatus());
 	}
 
@@ -267,6 +267,76 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertSame(200, $this->deliver($body, 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, Vectors::secret())));
 		$this->assertSame([], $this->notes((int)$this->order->id));
 		$this->assertStringContainsString('unknown event "order.refunded"', implode("\n", $this->log));
+	}
+
+	/** Signs `body` with the shop's secret as of the vectors' clock, and delivers it. */
+	private function deliverSigned(string $body): int {
+		$t = Vectors::sentAt();
+
+		return $this->deliver($body, 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, Vectors::secret()));
+	}
+
+	/**
+	 * A test webhook (the merchant's "Send a test webhook", or the module's
+	 * "Test connection"): accepted once its signature checks out, kept as
+	 * the last test received, and no order changes.
+	 */
+	public function test_a_test_webhook_is_kept_and_changes_no_order(): void {
+		$history = $this->statusHistory((int)$this->order->id);
+
+		$this->assertSame(200, $this->deliverVector('webhook.test'));
+
+		$connection = $this->module()->connection();
+		$this->assertSame(Vectors::sentAt(), $connection->lastTestAt);
+		$this->assertSame(Vectors::delivery('webhook.test')['headers']['X-Monokulo-Event-Id'], $connection->lastTestEventId);
+		$this->assertSame($this->awaiting(), $this->currentStatus());
+		$this->assertSame($history, $this->statusHistory((int)$this->order->id));
+		$this->assertSame([], $this->notes((int)$this->order->id));
+		$this->assertSame([], $this->rows('SELECT * FROM `' . _DB_PREFIX_ . 'monokulo_event`'), 'no order event claimed');
+		$this->assertStringContainsString('Test webhook evt_0000000000000012 received; no order changed.', implode("\n", $this->log));
+	}
+
+	/** A test with a wrong signature is refused like any delivery, and isn't kept. */
+	public function test_a_forged_test_webhook_is_refused_and_not_kept(): void {
+		$body = Vectors::delivery('webhook.test')['body'];
+		$t = Vectors::sentAt();
+
+		$this->assertSame(401, $this->deliver($body, 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, 'whsec_not_the_shops')));
+		$this->assertSame(401, $this->deliver($body, Vectors::delivery('webhook.test')['headers']['X-Monokulo-Signature'], Vectors::sentAt() + 301), 'too late');
+		$this->assertSame(0, $this->module()->connection()->lastTestAt);
+		$this->assertSame('', $this->module()->connection()->lastTestEventId);
+	}
+
+	/** Connecting again (a new webhook) forgets the old webhook's last test. */
+	public function test_connecting_again_forgets_the_last_test(): void {
+		$this->deliverVector('webhook.test');
+
+		$this->connect();
+
+		$this->assertSame(0, $this->module()->connection()->lastTestAt);
+	}
+
+	/**
+	 * An event this version doesn't know is answered 2xx and changes
+	 * nothing, whether it names no order, or an order this shop never made:
+	 * a 4xx would show in Monokulo as a failed delivery, and be retried.
+	 */
+	public function test_an_unknown_event_about_no_order_or_another_order_is_accepted(): void {
+		$this->assertSame(200, $this->deliverSigned((string)json_encode(['api_version' => 2, 'event_id' => 'evt_store', 'event' => 'store.updated', 'created_at' => 1])));
+		$this->assertSame(200, $this->deliverSigned((string)json_encode(['api_version' => 2, 'event_id' => 'evt_other', 'event' => 'order.refunded', 'created_at' => 1, 'order_id' => 'order_not_here'])));
+
+		$this->assertSame([], $this->notes((int)$this->order->id));
+		$this->assertSame($this->awaiting(), $this->currentStatus());
+		$this->assertSame(0, $this->module()->connection()->lastTestAt, 'not a test either');
+	}
+
+	/** An order's event must say which order. */
+	public function test_an_order_event_naming_no_order_is_a_bad_request(): void {
+		$paid = json_decode(Vectors::delivery('order.paid')['body'], true);
+		unset($paid['order_id']);
+
+		$this->assertSame(400, $this->deliverSigned((string)json_encode($paid)));
+		$this->assertSame($this->awaiting(), $this->currentStatus());
 	}
 
 	/**

@@ -68,6 +68,29 @@ final class Api {
 		return self::example('post', '/plugins/connect/{slug}/finish', '200', $onion ? 'no-key-with-onion' : 'no-key');
 	}
 
+	/** @return array<string, mixed> the send-test-webhook form's answer: the shop's webhook took the test */
+	public static function testDelivered(bool $onion = true): array {
+		return self::example('post', '/api/v1/webhook-tests', '200', $onion ? 'sk-with-onion' : 'sk');
+	}
+
+	/**
+	 * The same answer for a test the shop's webhook didn't take (answered
+	 * 500, tried again in a minute), which the document has no recording
+	 * of: only the fields its schema says change.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public static function testNotDelivered(): array {
+		$answer = self::testDelivered();
+		$answer['delivered'] = false;
+		$answer['status'] = 500;
+		$answer['error'] = 'answered 500';
+		$answer['response'] = "HTTP/1.1 500 Internal Server Error\ncontent-type: text/plain; charset=utf-8\n\n500";
+		$answer['next_attempt_at'] = 1760020452;
+
+		return $answer;
+	}
+
 	/** @return array<string, mixed> the recorded problem `name` that `method path` answers with */
 	public static function recordedProblem(string $method, string $path, string $name): array {
 		foreach (self::operation($method, $path)['responses'] as $answer) {

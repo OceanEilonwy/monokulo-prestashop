@@ -31,7 +31,15 @@ use PHPUnit\Framework\TestCase;
  *    merchant's link, which the shop takes from each of the order's
  *    webhooks, so keeps none) opens it on the dashboard;
  * 5. a second guest's order is one request, from the entry the shop kept,
- *    and once the kept entry has expired the shop checks it with its ETag.
+ *    and once the kept entry has expired the shop checks it with its ETag;
+ * 6. the connection, end to end: the entry's `send-test-webhook` form has
+ *    Monokulo send the shop's webhook (the address the shop registered
+ *    when it connected) a signed `webhook.test`, which it delivers (`2xx`);
+ *    the shop's receiver kept that same event as the last test (it keeps
+ *    only one whose signature checked out), no order changed, and the
+ *    settings page says so. Then the admin presses "Test connection" on
+ *    the real settings page, which does the same and says it was delivered.
+ *    Two tests: well under Monokulo's 6 a minute for a store.
  *
  * This Monokulo has an onion address (docker/monokulo-smoke.toml): the
  * handshake gives the shop its onion entry, and each order its onion
@@ -93,6 +101,75 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertItAnswersAsTheRecordingsSay($connection, $entry, $order);
 		$this->assertTheKeptEntryMakesAnOrderOneRequest();
 		$this->assertAnUnknownKeyIsRefusedAtTheEntry($connection);
+		$this->assertATestWebhookReachesTheShop($connection, $entry);
+		$this->assertTestConnectionSaysItWasDelivered();
+	}
+
+	/** @return array<string, mixed> every order's status, history, payments and notes: what a webhook could change */
+	private function orderState(): array {
+		return [
+			Shop::rows('SELECT id_order, current_state FROM ps_orders ORDER BY id_order'),
+			Shop::rows('SELECT COUNT(*) AS n FROM ps_order_history')[0]['n'],
+			Shop::rows('SELECT COUNT(*) AS n FROM ps_order_payment')[0]['n'],
+			Shop::rows('SELECT COUNT(*) AS n FROM ps_customer_message')[0]['n'],
+			Shop::rows('SELECT monokulo_order_id, paid_at FROM ps_monokulo_order ORDER BY seq'),
+			Shop::rows('SELECT COUNT(*) AS n FROM ps_monokulo_event')[0]['n'],
+		];
+	}
+
+	/**
+	 * The entry's send-test-webhook form, sent as the shop's key: Monokulo
+	 * delivers a signed webhook.test to the shop's own webhook address, and
+	 * the shop's receiver keeps it and changes no order.
+	 */
+	private function assertATestWebhookReachesTheShop(array $connection, array $entry): void {
+		$before = $this->orderState();
+		$form = $entry['_templates']['send-test-webhook'];
+		$curl = curl_init(Url::resolve($connection['api'], $form['target']));
+		curl_setopt_array($curl, [
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_CUSTOMREQUEST  => $form['method'],
+			CURLOPT_POSTFIELDS     => '{}',
+			CURLOPT_TIMEOUT        => 30,
+			CURLOPT_HTTPHEADER     => ['Content-Type: ' . $form['contentType'], 'Accept: application/prs.hal-forms+json', 'Authorization: Bearer ' . $connection['secret_token']],
+		]);
+		$body = (string)curl_exec($curl);
+		$this->assertSame(200, curl_getinfo($curl, CURLINFO_RESPONSE_CODE), $body);
+		$answer = json_decode($body, true);
+
+		$this->assertTrue($answer['delivered'], 'delivered: ' . $body);
+		$this->assertGreaterThanOrEqual(200, $answer['status']);
+		$this->assertLessThan(300, $answer['status']);
+		$this->assertArrayNotHasKey('error', $answer);
+		$this->assertMatchesRegularExpression('/\Aevt_[0-9a-zA-Z_]+\z/', $answer['event_id']);
+		$this->assertEqualsCanonicalizing(array_keys(Api::testDelivered()), array_keys($answer), 'the recording\'s shape');
+
+		// Kept by the receiver, which keeps a test only once its signature checks out.
+		$kept = $this->connection();
+		$this->assertSame($answer['event_id'], $kept['last_test_event_id']);
+		$this->assertEqualsWithDelta(time(), (int)$kept['last_test_at'], 60);
+		$this->assertSame($before, $this->orderState(), 'no order changed');
+
+		$page = Shop::settingsPage($this->browser); // signed in to the back office since connecting
+		$this->assertMatchesRegularExpression('/Last test webhook received: \S.* \(' . preg_quote($answer['event_id'], '/') . '\)/', $page->text());
+	}
+
+	/** The admin presses "Test connection" on the real settings page: delivered, and the page shows that test. */
+	private function assertTestConnectionSaysItWasDelivered(): void {
+		$before = $this->orderState();
+		$last = $this->connection()['last_test_event_id'];
+		$admin = $this->browser; // signed in to the back office since connecting
+
+		$tested = $admin->submitWith(Shop::settingsPage($admin), 'monokulo_test', ['submitMonokuloTest' => '1']);
+
+		$this->assertSame(200, $tested->status);
+		$this->assertMatchesRegularExpression('/Monokulo sent this shop a test webhook, and the shop took it: HTTP 2\d\d in \d+ ms \((evt_[^)]+)\)\./', $tested->text());
+		preg_match('/the shop took it: HTTP 2\d\d in \d+ ms \((evt_[^)]+)\)\./', $tested->text(), $m);
+		$this->assertNotSame($last, $m[1], 'a new test');
+		$this->assertSame($m[1], $this->connection()['last_test_event_id']);
+		$this->assertStringContainsString('(' . $m[1] . ')', $tested->text(), 'the page shows it as the last test received');
+		$this->assertMatchesRegularExpression('/Last test webhook received: \S.* \(' . preg_quote($m[1], '/') . '\)/', $tested->text());
+		$this->assertSame($before, $this->orderState(), 'no order changed');
 	}
 
 	/** @return array<string, string> the shop's connection row */

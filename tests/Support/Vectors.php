@@ -41,6 +41,16 @@ final class Vectors {
 		return $out;
 	}
 
+	/**
+	 * The deliveries about the order (all but `webhook.test`, which is about
+	 * no order), keyed by name.
+	 *
+	 * @return array<string, array{name: string, body: string, headers: array<string, string>}>
+	 */
+	public static function orderDeliveries(): array {
+		return array_filter(self::deliveries(), static fn(array $delivery): bool => isset(json_decode($delivery['body'], true)['order_id']));
+	}
+
 	/** @return array<string, array{body: string, headers: array<string, string>, why: string}> keyed by why */
 	public static function refused(): array {
 		$out = [];

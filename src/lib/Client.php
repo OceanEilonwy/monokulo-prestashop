@@ -18,8 +18,9 @@ if (!defined('_PS_VERSION_')) {
 
 /**
  * The calls the shop's server makes to Monokulo: redeem a connect token,
- * create an order through Monokulo's HTTP API, and (when the merchant
- * turned it on) forward its warnings and errors.
+ * create an order through Monokulo's HTTP API, have it send the shop a test
+ * webhook, and (when the merchant turned it on) forward its warnings and
+ * errors.
  *
  * The API is HAL-FORMS: the client starts at the entry the connect flow
  * gave it and follows its forms, so it builds no address past the entry.
@@ -167,17 +168,43 @@ final class Client
     }
 
     /**
+     * Has Monokulo send the shop's webhook (the one registered when it
+     * connected) a signed `webhook.test`, with the entry's
+     * `send-test-webhook` form. Monokulo answers once the webhook has:
+     * `200` with `event_id`, `delivered`, and `status`, `duration_ms`,
+     * `error` and `next_attempt_at` as it went. Returns that answer; throws
+     * ApiError for a problem (`rate-limited`, `not-found`), with status 0
+     * when the entry doesn't offer the form.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws ApiError|TransportError
+     */
+    public function sendTestWebhook(Connection $connection): array
+    {
+        // `{}`: the webhook the shop registered. Monokulo waits for it to
+        // answer (5 seconds unless its admin changed that).
+        [, $response] = $this->submit($connection, 'send-test-webhook', new \stdClass(), 30);
+        $answer = $this->decode($response, 200);
+        if (!is_string($answer['event_id'] ?? null) || !is_bool($answer['delivered'] ?? null)) {
+            throw new ApiError($response->status, 'missing event_id or delivered: ' . $response->body);
+        }
+
+        return $answer;
+    }
+
+    /**
      * Fills in the entry's form `name` with `body`. When the form's answer
      * says the kept entry may be out of date (401, 404, 405), the entry is
      * read again and, if it changed, the form sent once more from it.
      *
-     * @param array<string, mixed> $body
+     * @param array<string, mixed>|\stdClass $body
      *
      * @return array{string, HttpResponse} where it went, and the answer
      *
      * @throws ApiError|TransportError
      */
-    private function submit(Connection $connection, string $name, array $body, int $timeoutSeconds): array
+    private function submit(Connection $connection, string $name, array|\stdClass $body, int $timeoutSeconds): array
     {
         $entry = $this->entry($connection, false);
         $sent = $this->sendForm($connection, $entry, $name, $body, $timeoutSeconds);
@@ -192,13 +219,13 @@ final class Client
     }
 
     /**
-     * @param array<string, mixed> $body
+     * @param array<string, mixed>|\stdClass $body
      *
      * @return array{string, HttpResponse}
      *
      * @throws ApiError|TransportError
      */
-    private function sendForm(Connection $connection, Entry $entry, string $name, array $body, int $timeoutSeconds): array
+    private function sendForm(Connection $connection, Entry $entry, string $name, array|\stdClass $body, int $timeoutSeconds): array
     {
         $form = $entry->form($name);
         $target = $form['target'] ?? null;

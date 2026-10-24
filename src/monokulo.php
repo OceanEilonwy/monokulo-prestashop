@@ -22,6 +22,7 @@ use Monokulo\PrestaShop\OrderRequest;
 use Monokulo\PrestaShop\Repository;
 use Monokulo\PrestaShop\Shop\Orders;
 use Monokulo\PrestaShop\Shop\PrestaShopDatabase;
+use Monokulo\PrestaShop\TestOutcome;
 use Monokulo\PrestaShop\Trace;
 use Monokulo\PrestaShop\TransportError;
 use Monokulo\PrestaShop\Url;
@@ -188,6 +189,12 @@ class Monokulo extends PaymentModule
             }
         }
 
+        if (Tools::isSubmit('submitMonokuloTest')) {
+            $html .= $this->getPermission('configure')
+                ? $this->testNotice($this->testConnection((int) Tools::getValue('monokulo_test')))
+                : $this->displayError($this->text('error_permission'));
+        }
+
         if (Tools::getValue('monokulo_connected')) {
             $html .= $this->displayConfirmation($this->text('connected'));
         }
@@ -322,6 +329,51 @@ class Monokulo extends PaymentModule
         return $helper->generateForm($forms);
     }
 
+    /**
+     * "Test connection": has Monokulo send shop `shopId`'s webhook a test
+     * webhook, with the API entry's `send-test-webhook` form, and says how
+     * it went. Its receiver keeps the test as the last one received.
+     */
+    public function testConnection(int $shopId): TestOutcome
+    {
+        $shop = new Shop($shopId);
+        $connection = Validate::isLoadedObject($shop) ? $this->connection($shop) : null;
+        if (!$connection) {
+            return TestOutcome::refused(new ApiError(404, 'this shop is not connected', 'https://docs.monokulo.com/problems/not-found'));
+        }
+        try {
+            $outcome = TestOutcome::answered($this->client()->sendTestWebhook($connection));
+        } catch (ApiError $e) {
+            $outcome = TestOutcome::refused($e);
+        } catch (TransportError $e) {
+            $outcome = TestOutcome::unreachable($e, $connection->api);
+        }
+        if ($outcome->log !== '') {
+            $this->log()->error($outcome->log);
+            $this->forward($connection);
+        } else {
+            $this->log()->info(sprintf('Test connection for %s: %s.', $connection->host, $outcome->key));
+        }
+
+        return $outcome;
+    }
+
+    /** A test's outcome, as a back office notice. */
+    private function testNotice(TestOutcome $outcome): string
+    {
+        $params = $outcome->params;
+        if ($outcome->nextAttemptAt !== null) {
+            $params['%next%'] = Tools::displayDate(date('Y-m-d H:i:s', $outcome->nextAttemptAt), true);
+        }
+        $message = $this->text($outcome->key, $params);
+
+        return match ($outcome->notice) {
+            'confirmation' => $this->displayConfirmation($message),
+            'warning' => $this->displayWarning($message),
+            default => $this->displayError($message),
+        };
+    }
+
     /** The Stores panel: each shop, its connection, and its Connect button. */
     private function renderStores(string $back): string
     {
@@ -340,6 +392,10 @@ class Monokulo extends PaymentModule
                     '%date%' => Tools::displayDate(date('Y-m-d H:i:s', $connection->connectedAt), true),
                 ]) : '',
                 'onion' => $connection && $connection->onionApi !== '' ? $this->text('connected_onion', ['%onion%' => Url::origin($connection->onionApi)]) : '',
+                'last_test' => !$connection ? '' : ($connection->lastTestAt > 0 ? $this->text('last_test', [
+                    '%date%' => Tools::displayDate(date('Y-m-d H:i:s', $connection->lastTestAt), true),
+                    '%event%' => $connection->lastTestEventId,
+                ]) : $this->text('no_test')),
                 'connect' => $back . '&monokulo_connect=' . (int) $shop->id,
             ];
         }
@@ -347,6 +403,7 @@ class Monokulo extends PaymentModule
         $this->context->smarty->assign([
             'monokulo_stores' => $stores,
             'monokulo_can_connect' => $canConnect,
+            'monokulo_back' => $back,
             'monokulo_text' => [
                 'stores' => $this->text('stores'),
                 'stores_help' => $this->text('stores_help'),
@@ -354,6 +411,7 @@ class Monokulo extends PaymentModule
                 'not_connected' => $this->text('not_connected'),
                 'connect' => $this->text('connect'),
                 'reconnect' => $this->text('reconnect'),
+                'test' => $this->text('test'),
             ],
         ]);
 
@@ -905,6 +963,18 @@ class Monokulo extends PaymentModule
             'error_connect_finish' => $this->trans('Monokulo did not hand over the store\'s keys. Please connect again; the log says why.', [], $admin),
             'error_connect_unavailable' => $this->trans('Your Monokulo cannot connect shops yet: its operator has not set its public address.', [], $admin),
             'error_connect_busy' => $this->trans('Your Monokulo is receiving too many connect attempts from this shop. Wait a minute, then connect again.', [], $admin),
+            'test' => $this->trans('Test connection', [], $admin),
+            'last_test' => $this->trans('Last test webhook received: %date% (%event%)', [], $admin),
+            'no_test' => $this->trans('No test webhook received yet.', [], $admin),
+            'test_delivered' => $this->trans('Monokulo sent this shop a test webhook, and the shop took it: HTTP %status% in %duration% ms (%event%).', [], $admin),
+            'test_failed_retry' => $this->trans('Monokulo sent this shop a test webhook, but the shop did not take it: %error%. Monokulo tries again at %next%. (%event%)', [], $admin),
+            'test_failed' => $this->trans('Monokulo sent this shop a test webhook, but the shop did not take it: %error%. (%event%)', [], $admin),
+            'test_rate_limited' => $this->trans('Monokulo sends at most 6 test webhooks a minute for a store. Wait %seconds% seconds, then test again.', [], $admin),
+            'test_not_found' => $this->trans('Monokulo has no webhook for this shop to test. Connect the shop again.', [], $admin),
+            'test_key_refused' => $this->trans('Monokulo refused the shop\'s key. Connect the shop again.', [], $admin),
+            'test_not_offered' => $this->trans('Your Monokulo cannot send test webhooks: it needs updating.', [], $admin),
+            'test_refused' => $this->trans('Monokulo did not send the test webhook (HTTP %status%). The log says why.', [], $admin),
+            'test_unreachable' => $this->trans('Your Monokulo could not be reached from this shop\'s server. Check the address, then test again.', [], $admin),
             'error_connect_unreachable' => $this->trans('Your Monokulo could not be reached from this shop\'s server. Check the address, then connect again.', [], $admin),
         };
 
