@@ -254,11 +254,11 @@ final class CheckoutTest extends ShopTestCase {
 
 	public static function failures(): array {
 		return [
-			'busy'          => [429, Api::problem('rate-limited', 429, 'Too many requests', 'slow down'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: slow down (rate limited'],
+			'busy'          => [429, Api::recordedProblem('post', '/api/v1/orders', 'rate-limited'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: ' . Api::recordedProblem('post', '/api/v1/orders', 'rate-limited')['detail'] . ' (rate limited'],
 			'key rejected'  => [401, Api::recordedProblem('get', '/api/v1', 'unauthorized'), 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
 			'not priced'    => [400, Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount'), 'This order cannot be paid in Monero right now. Please choose another payment method, or contact the store.', 'HTTP 400: ' . Api::recordedProblem('post', '/api/v1/orders', 'invalid-amount')['detail'] . ' (Monokulo cannot price this order'],
-			'no rate'       => [503, Api::problem('rates-unavailable', 503, 'No exchange rate right now', 'no GBP rate') + ['retry_after' => 30], 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: no GBP rate (Monokulo has no exchange rate for this currency right now'],
-			'engine busy'   => [503, Api::problem('engine-unavailable', 503, 'Payment engine unavailable', 'busy'), 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: busy (Monokulo\'s payment engine is unavailable right now. No Monokulo order was made'],
+			'no rate'       => [503, Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable'), 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: ' . Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable')['detail'] . ' (Monokulo has no exchange rate for this currency right now'],
+			'engine busy'   => [503, Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable'), 'Monero payments can\'t be started at this moment. Please try again shortly: your order is kept.', 'HTTP 503: ' . Api::recordedProblem('post', '/api/v1/orders', 'engine-unavailable')['detail'] . ' (Monokulo\'s payment engine is unavailable right now. No Monokulo order was made'],
 			'anything else' => [500, 'oops', 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: oops'],
 		];
 	}
@@ -288,7 +288,7 @@ final class CheckoutTest extends ShopTestCase {
 	/** Warnings and errors also go to PrestaShop's own log, for merchants who look there. */
 	public function test_errors_are_also_in_prestashops_log(): void {
 		$this->connect();
-		$this->monokuloAnswers('', 500, Api::problem('internal', 500, 'Internal error', '<b>broken</b>'));
+		$this->monokuloAnswers('', 500, ['detail' => '<b>broken</b>'] + Api::recordedProblem('post', '/api/v1/orders', 'internal'));
 
 		$this->pay($this->cart());
 
@@ -345,7 +345,7 @@ final class CheckoutTest extends ShopTestCase {
 	 */
 	public function test_trying_again_after_no_rate_sends_the_same_request(): void {
 		$this->connect();
-		$this->monokuloAnswers('', 503, Api::problem('rates-unavailable', 503, 'No exchange rate right now', 'no GBP rate'));
+		$this->monokuloAnswers('', 503, Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable'));
 		$cart = $this->cart();
 		$this->assertArrayHasKey('error', $this->pay($cart));
 		$order = \Order::getByCartId((int)$cart->id);
@@ -397,7 +397,7 @@ final class CheckoutTest extends ShopTestCase {
 	/** With "Send errors to Monokulo" on, a failure is also reported to Monokulo; off, it isn't. */
 	public function test_errors_are_forwarded_only_when_turned_on(): void {
 		$this->connect();
-		$slowDown = Api::problem('rate-limited', 429, 'Too many requests', 'slow down');
+		$slowDown = Api::recordedProblem('post', '/api/v1/orders', 'rate-limited');
 		$this->monokuloAnswers('', 429, $slowDown);
 		self::$monokulo->respond('POST', '/api/v1/logs', 204, '');
 
@@ -415,7 +415,7 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame('Bearer sk_test', $requests[1]['headers']['authorization']);
 		$entries = json_decode($requests[1]['body'], true)['entries'];
 		$this->assertSame('error', $entries[0]['level']);
-		$this->assertStringContainsString('HTTP 429: slow down', $entries[0]['message']);
+		$this->assertStringContainsString('HTTP 429: ' . $slowDown['detail'], $entries[0]['message']);
 		$this->assertSame(substr($requests[0]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
 	}
 

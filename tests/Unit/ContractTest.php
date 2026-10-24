@@ -114,6 +114,45 @@ final class ContractTest extends TestCase {
 		$this->assertArrayNotHasKey('mk:dashboard-order', Api::example('post', '/api/v1/orders', '201', 'pk')['_links'], 'the merchant\'s page is for the secret key only');
 	}
 
+	/**
+	 * Each problem the module tells apart is one Monokulo lists for its
+	 * route, under its own status, with a recorded example, and the headers
+	 * the module reads; no route falls back to a catch-all `default`.
+	 */
+	public function test_the_problems_the_module_tells_apart_are_listed_per_route(): void {
+		$orders = Api::operation('post', '/api/v1/orders')['responses'];
+		foreach (['invalid-amount' => 400, 'unauthorized' => 401, 'forbidden' => 403, 'idempotency-conflict' => 409, 'rate-limited' => 429, 'engine-unavailable' => 503, 'rates-unavailable' => 503] as $name => $status) {
+			$problem = Api::recordedProblem('post', '/api/v1/orders', $name);
+			$this->assertSame($status, $problem['status'], $name);
+			$this->assertSame('https://docs.monokulo.com/problems/' . $name, $problem['type'], $name);
+			$this->assertArrayHasKey($name, $orders[(string)$status]['content']['application/problem+json']['examples'], $name);
+		}
+		$this->assertArrayHasKey('Retry-After', $orders['503']['headers']);
+		$this->assertArrayHasKey('Retry-After', $orders['429']['headers']);
+		$this->assertIsInt(Api::recordedProblem('post', '/api/v1/orders', 'rates-unavailable')['retry_after']);
+		$this->assertSame(401, Api::recordedProblem('get', '/api/v1', 'unauthorized')['status']);
+
+		foreach ([['post', '/api/v1/orders'], ['get', '/api/v1'], ['post', '/api/v1/logs'], ['post', '/plugins/connect/{slug}/finish']] as [$method, $path]) {
+			$this->assertArrayNotHasKey('default', Api::operation($method, $path)['responses'], "$method $path");
+		}
+	}
+
+	/**
+	 * Monokulo leaves a field with no value out instead of sending `null`:
+	 * no order or store field the recordings show is `null`, and the fields
+	 * that may have no value aren't required.
+	 */
+	public function test_a_field_with_no_value_is_left_out(): void {
+		$order = Api::order('order_1');
+		array_walk_recursive($order, function ($value, $key): void {
+			$this->assertNotNull($value, (string)$key);
+		});
+		$required = Api::schema('Order')['required'] ?? [];
+		foreach (['cancelled_at', 'amount', 'currency', 'merchant_order_id', 'description'] as $field) {
+			$this->assertNotContains($field, $required, $field);
+		}
+	}
+
 	/** The handshake takes what the module sends, and answers what it keeps. */
 	public function test_the_handshake_takes_and_gives_what_the_module_uses(): void {
 		$finish = Api::schema('PluginConnectFinish');
